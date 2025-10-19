@@ -3,23 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Book, 
   Clock, 
-  Users, 
   Settings, 
   RefreshCw, 
   Save, 
   Trash2, 
-  Eye, 
-  EyeOff, 
-  Key,
-  User,
   Cpu,
   Network,
   Database,
   Archive,
-  BarChart,
-  Search,
-  Plus,
-  Edit
+  Download
 } from 'lucide-react';
 import bg from "../assets/bg-gradient.png";
 import CommonHeader from '../components/CommonHeader';
@@ -33,29 +25,15 @@ const SmartIOTPage = () => {
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
   const [bookshelfBooks, setBookshelfBooks] = useState([]);
-  const [allTheses, setAllTheses] = useState([]);
   const [settings, setSettings] = useState({
-    autoLogging: true,
-    logRetentionDays: 30,
-    enableNotifications: true,
-    maxBorrowDuration: 7,
-    iotDeviceStatus: 'online',
-    autoSync: true,
-    realTimeUpdates: true,
-    bookshelfCapacity: 50,
-    scanTimeout: 30
+    device_status: 'active'
   });
   const [currentAdmin, setCurrentAdmin] = useState(null);
-  const [showAddBookModal, setShowAddBookModal] = useState(false);
-  const [selectedThesis, setSelectedThesis] = useState('');
-  const [bookshelfLocation, setBookshelfLocation] = useState('');
-  const [physicalCondition, setPhysicalCondition] = useState('excellent');
 
   useEffect(() => {
     fetchCurrentAdmin();
     fetchLogs();
     fetchBookshelfBooks();
-    fetchAllTheses();
     fetchSettings();
   }, []);
 
@@ -71,8 +49,12 @@ const SmartIOTPage = () => {
     try {
       setLoading(true);
       const { data, error } = await supabase
-        .from('iot_bookshelf_logs')
-        .select('*')
+        .from('bookshelf_logs')
+        .select(`
+          *,
+          users:user_id (user_id, username, full_name),
+          theses:thesis_id (thesis_id, title)
+        `)
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -88,24 +70,19 @@ const SmartIOTPage = () => {
   const fetchBookshelfBooks = async () => {
     try {
       setLoading(true);
-      // Fetch books from the new bookshelf_inventory table
       const { data, error } = await supabase
         .from('bookshelf_inventory')
         .select(`
           *,
-          thesestwo (
+          theses:thesis_id (
             thesis_id,
             title,
             author,
-            abstract,
-            college,
-            batch,
-            file_url,
-            file_name
+            college_department,
+            batch
           )
         `)
-        .eq('current_status', 'available')
-        .order('created_at', { ascending: false });
+        .order('thesis_book_id', { ascending: false });
 
       if (error) throw error;
       setBookshelfBooks(data || []);
@@ -116,30 +93,35 @@ const SmartIOTPage = () => {
     }
   };
 
-  const fetchAllTheses = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('thesestwo')
-        .select('thesis_id, title, author, college, batch')
-        .order('title', { ascending: true });
-
-      if (error) throw error;
-      setAllTheses(data || []);
-    } catch (error) {
-      console.error('Error fetching theses:', error);
-    }
-  };
-
   const fetchSettings = async () => {
     try {
       const { data, error } = await supabase
-        .from('system_settings')
+        .from('bookshelf_settings')
         .select('*')
-        .eq('setting_type', 'iot_bookshelf')
         .single();
 
-      if (data && data.settings) {
-        setSettings(data.settings);
+      if (error && error.code !== 'PGRST116') {
+        throw error;
+      }
+
+      if (data) {
+        setSettings({
+          device_status: data.device_status || 'active'
+        });
+      } else {
+        // Initialize settings if no record exists
+        const { error: insertError } = await supabase
+          .from('bookshelf_settings')
+          .insert([
+            { 
+              device_id: 1, 
+              device_status: 'active'
+            }
+          ]);
+
+        if (insertError) throw insertError;
+        
+        setSettings({ device_status: 'active' });
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -151,11 +133,10 @@ const SmartIOTPage = () => {
       setLoading(true);
       
       const { error } = await supabase
-        .from('system_settings')
+        .from('bookshelf_settings')
         .upsert({
-          setting_type: 'iot_bookshelf',
-          settings: settings,
-          updated_at: new Date().toISOString()
+          device_id: 1,
+          device_status: settings.device_status
         });
 
       if (error) throw error;
@@ -169,64 +150,83 @@ const SmartIOTPage = () => {
     }
   };
 
-  const clearLogs = async () => {
-    if (!confirm('Are you sure you want to clear all logs? This action cannot be undone.')) return;
+  const archiveOldLogs = async () => {
+    if (!confirm('Are you sure you want to archive logs older than 30 days? This will create a downloadable archive file.')) return;
 
     try {
-      const { error } = await supabase
-        .from('iot_bookshelf_logs')
-        .delete()
-        .lt('created_at', new Date(Date.now() - settings.logRetentionDays * 24 * 60 * 60 * 1000).toISOString());
+      setLoading(true);
+      
+      // Calculate date 30 days ago
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      // Get old logs for archiving
+      const { data: oldLogs, error: fetchError } = await supabase
+        .from('bookshelf_logs')
+        .select(`
+          *,
+          users:user_id (user_id, username, full_name),
+          theses:thesis_id (thesis_id, title)
+        `)
+        .lt('created_at', thirtyDaysAgo.toISOString())
+        .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (fetchError) throw fetchError;
+
+      if (!oldLogs || oldLogs.length === 0) {
+        alert('No logs found older than 30 days to archive.');
+        return;
+      }
+
+      // Create downloadable archive
+      const archiveData = {
+        archiveDate: new Date().toISOString(),
+        totalLogs: oldLogs.length,
+        dateRange: {
+          from: oldLogs[oldLogs.length - 1].created_at,
+          to: oldLogs[0].created_at
+        },
+        logs: oldLogs
+      };
+
+      // Create and download JSON file
+      const dataStr = JSON.stringify(archiveData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bookshelf_logs_archive_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      // Delete old logs after successful archive
+      const { error: deleteError } = await supabase
+        .from('bookshelf_logs')
+        .delete()
+        .lt('created_at', thirtyDaysAgo.toISOString());
+
+      if (deleteError) throw deleteError;
       
       fetchLogs();
-      alert('Old logs cleared successfully!');
+      alert(`Successfully archived ${oldLogs.length} logs and downloaded archive file.`);
     } catch (error) {
-      console.error('Error clearing logs:', error);
-      alert('Error clearing logs');
+      console.error('Error archiving logs:', error);
+      alert('Error archiving logs');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const addBookToBookshelf = async () => {
-    if (!selectedThesis || !bookshelfLocation) {
-      alert('Please select a thesis and provide a bookshelf location');
-      return;
-    }
-
-    try {
-      const { error } = await supabase
-        .from('bookshelf_inventory')
-        .insert({
-          thesis_id: selectedThesis,
-          bookshelf_location: bookshelfLocation,
-          physical_condition: physicalCondition,
-          current_status: settings.iotDeviceStatus === 'maintenance' ? 'maintenance' : 'available',
-          last_scan: new Date().toISOString()
-        });
-
-      if (error) throw error;
-      
-      setShowAddBookModal(false);
-      setSelectedThesis('');
-      setBookshelfLocation('');
-      setPhysicalCondition('excellent');
-      fetchBookshelfBooks();
-      alert('Book added to bookshelf successfully!');
-    } catch (error) {
-      console.error('Error adding book to bookshelf:', error);
-      alert('Error adding book to bookshelf');
-    }
-  };
-
-  const removeBookFromShelf = async (inventoryId) => {
+  const removeBookFromShelf = async (thesis_book_id) => {
     if (!confirm('Are you sure you want to remove this book from the bookshelf?')) return;
 
     try {
       const { error } = await supabase
         .from('bookshelf_inventory')
         .delete()
-        .eq('id', inventoryId);
+        .eq('thesis_book_id', thesis_book_id);
 
       if (error) throw error;
       
@@ -238,15 +238,14 @@ const SmartIOTPage = () => {
     }
   };
 
-  const updateBookStatus = async (inventoryId, newStatus) => {
+  const updateBookStatus = async (thesis_book_id, newStatus) => {
     try {
       const { error } = await supabase
         .from('bookshelf_inventory')
         .update({ 
-          current_status: newStatus,
-          last_scan: new Date().toISOString()
+          current_status: newStatus
         })
-        .eq('id', inventoryId);
+        .eq('thesis_book_id', thesis_book_id);
 
       if (error) throw error;
       
@@ -256,31 +255,6 @@ const SmartIOTPage = () => {
       console.error('Error updating book status:', error);
       alert('Error updating book status');
     }
-  };
-
-  const simulateIoTActivity = () => {
-    const actions = ['scan', 'borrow', 'return', 'check_in', 'check_out'];
-    const statuses = ['success', 'failed'];
-    const sampleBooks = [
-      'Machine Learning Thesis 2024',
-      'AI Research Document',
-      'Computer Vision Study',
-      'Data Analysis Research'
-    ];
-
-    const newLog = {
-      id: Date.now(),
-      action: actions[Math.floor(Math.random() * actions.length)],
-      book_title: sampleBooks[Math.floor(Math.random() * sampleBooks.length)],
-      book_id: 'TH-' + Math.floor(Math.random() * 1000),
-      user_name: 'Test User ' + Math.floor(Math.random() * 10),
-      user_id: 'user-' + Math.floor(Math.random() * 100),
-      status: statuses[Math.floor(Math.random() * statuses.length)],
-      created_at: new Date().toISOString()
-    };
-    
-    setLogs(prev => [newLog, ...prev.slice(0, 99)]);
-    alert('Simulated IoT activity logged!');
   };
 
   const toggleSidebar = () => {
@@ -296,15 +270,15 @@ const SmartIOTPage = () => {
     navigate('/');
   };
 
+  // Calculate statistics
+  const availableBooksCount = bookshelfBooks.filter(book => book.current_status === 'available').length;
+  const borrowedBooksCount = bookshelfBooks.filter(book => book.current_status === 'borrowed').length;
+  const maintenanceBooksCount = bookshelfBooks.filter(book => book.current_status === 'maintenance').length;
+
   return (
     <div className="min-h-screen w-screen bg-cover bg-center bg-no-repeat flex flex-col font-sans" style={{ backgroundImage: `url(${bg})` }}>
       
-      <CommonHeader 
-        isAuthenticated={true} 
-        onLogOut={handleLogOut} 
-        userRole="admin"
-        onMenuToggle={toggleSidebar}
-      />
+      <CommonHeader isAuthenticated={true} onLogOut={handleLogOut} userRole="admin" />
 
       <div className="flex-1 flex">
         <SideNav isOpen={isSidebarOpen} onClose={closeSidebar} />
@@ -329,15 +303,13 @@ const SmartIOTPage = () => {
                   <div>
                     <p className="text-gray-600 text-sm">Device Status</p>
                     <p className={`text-2xl font-bold ${
-                      settings?.iotDeviceStatus === 'online' ? 'text-green-600' : 
-                      settings?.iotDeviceStatus === 'maintenance' ? 'text-yellow-600' : 'text-red-600'
+                      settings?.device_status === 'active' ? 'text-green-600' : 'text-yellow-600'
                     }`}>
-                      {settings?.iotDeviceStatus?.charAt(0)?.toUpperCase() + settings?.iotDeviceStatus?.slice(1) || 'Unknown'}
+                      {settings?.device_status?.charAt(0)?.toUpperCase() + settings?.device_status?.slice(1) || 'Unknown'}
                     </p>
                   </div>
                   <Network className={`w-8 h-8 ${
-                    settings.iotDeviceStatus === 'online' ? 'text-green-500' : 
-                    settings.iotDeviceStatus === 'maintenance' ? 'text-yellow-500' : 'text-red-500'
+                    settings.device_status === 'active' ? 'text-green-500' : 'text-yellow-500'
                   }`} />
                 </div>
               </div>
@@ -345,10 +317,22 @@ const SmartIOTPage = () => {
               <div className="bg-white/90 backdrop-blur-sm rounded-xl p-6 shadow-lg">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Available Books</p>
+                    <p className="text-gray-600 text-sm">Total Books</p>
                     <p className="text-2xl font-bold text-blue-600">{bookshelfBooks.length}</p>
                   </div>
                   <Book className="w-8 h-8 text-blue-500" />
+                </div>
+              </div>
+
+              <div className="bg-white/90 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-600 text-sm">Available Books</p>
+                    <p className="text-2xl font-bold text-green-600">
+                      {availableBooksCount}
+                    </p>
+                  </div>
+                  <Archive className="w-8 h-8 text-green-500" />
                 </div>
               </div>
 
@@ -359,18 +343,6 @@ const SmartIOTPage = () => {
                     <p className="text-2xl font-bold text-purple-600">{logs.length}</p>
                   </div>
                   <Database className="w-8 h-8 text-purple-500" />
-                </div>
-              </div>
-
-              <div className="bg-white/90 backdrop-blur-sm rounded-xl p-6 shadow-lg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-gray-600 text-sm">Bookshelf Capacity</p>
-                    <p className="text-2xl font-bold text-orange-600">
-                      {bookshelfBooks.length}/{settings.bookshelfCapacity}
-                    </p>
-                  </div>
-                  <Archive className="w-8 h-8 text-orange-500" />
                 </div>
               </div>
             </div>
@@ -413,13 +385,6 @@ const SmartIOTPage = () => {
                       <h2 className="text-2xl font-bold text-gray-800">User Activity Logs</h2>
                       <div className="flex gap-2">
                         <button
-                          onClick={simulateIoTActivity}
-                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-                        >
-                          <RefreshCw size={16} />
-                          Simulate Activity
-                        </button>
-                        <button
                           onClick={fetchLogs}
                           className="flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition-colors"
                         >
@@ -427,13 +392,20 @@ const SmartIOTPage = () => {
                           Refresh Logs
                         </button>
                         <button
-                          onClick={clearLogs}
-                          className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors"
+                          onClick={archiveOldLogs}
+                          className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors"
                         >
-                          <Trash2 size={16} />
-                          Clear Old Logs
+                          <Download size={16} />
+                          Archive Old Logs
                         </button>
                       </div>
+                    </div>
+
+                    <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-700">
+                        <strong>Note:</strong> Archiving logs will download a JSON file containing logs older than 30 days 
+                        and then remove them from the database to improve performance.
+                      </p>
                     </div>
 
                     {loading ? (
@@ -445,10 +417,10 @@ const SmartIOTPage = () => {
                       <div className="bg-gray-50 rounded-lg border">
                         <div className="grid grid-cols-12 gap-4 p-4 font-semibold text-sm text-gray-600 border-b">
                           <div className="col-span-2">Timestamp</div>
+                          <div className="col-span-2">User</div>
+                          <div className="col-span-5">Book Details</div>
                           <div className="col-span-2">Action</div>
-                          <div className="col-span-3">Book Details</div>
-                          <div className="col-span-3">User</div>
-                          <div className="col-span-2">Status</div>
+                          <div className="col-span-1">ID</div>
                         </div>
                         <div className="max-h-96 overflow-y-auto">
                           {logs.length === 0 ? (
@@ -458,7 +430,7 @@ const SmartIOTPage = () => {
                           ) : (
                             logs.map((log, index) => (
                               <div
-                                key={log.id}
+                                key={log.bookshelf_logs_id || index}
                                 className={`grid grid-cols-12 gap-4 p-4 text-sm border-b ${
                                   index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
                                 }`}
@@ -467,34 +439,26 @@ const SmartIOTPage = () => {
                                   {new Date(log.created_at).toLocaleString()}
                                 </div>
                                 <div className="col-span-2">
-                                  <span className={`px-2 py-1 rounded-full text-xs ${
-                                    log.action === 'borrow' 
-                                      ? 'bg-green-100 text-green-800'
-                                      : log.action === 'return'
-                                      ? 'bg-blue-100 text-blue-800'
-                                      : log.action === 'scan'
-                                      ? 'bg-purple-100 text-purple-800'
-                                      : 'bg-gray-100 text-gray-800'
-                                  }`}>
-                                    {log.action}
-                                  </span>
+                                  <div className="font-medium">{log.users?.full_name || 'Unknown User'}</div>
+                                  <div className="text-gray-500 text-xs">{log.users?.username || 'N/A'}</div>
                                 </div>
-                                <div className="col-span-3">
-                                  <div className="font-medium">{log.book_title}</div>
-                                  <div className="text-gray-500 text-xs">{log.book_id}</div>
-                                </div>
-                                <div className="col-span-3">
-                                  <div className="font-medium">{log.user_name}</div>
-                                  <div className="text-gray-500 text-xs">{log.user_id}</div>
+                                <div className="col-span-5">
+                                  <div className="font-medium">{log.theses?.title || 'Unknown Book'}</div>
+                                  <div className="text-gray-500 text-xs">Thesis ID: {log.thesis_id}</div>
                                 </div>
                                 <div className="col-span-2">
                                   <span className={`px-2 py-1 rounded-full text-xs ${
-                                    log.status === 'success'
+                                    log.status === 'returned' 
                                       ? 'bg-green-100 text-green-800'
-                                      : 'bg-red-100 text-red-800'
+                                      : log.status === 'borrowed'
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : 'bg-purple-100 text-purple-800'
                                   }`}>
                                     {log.status}
                                   </span>
+                                </div>
+                                <div className="col-span-1 text-xs text-gray-500">
+                                  #{log.bookshelf_logs_id}
                                 </div>
                               </div>
                             ))
@@ -512,19 +476,43 @@ const SmartIOTPage = () => {
                       <h2 className="text-2xl font-bold text-gray-800">Books Available in Smart IoT Bookshelf</h2>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => setShowAddBookModal(true)}
-                          className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors"
-                        >
-                          <Plus size={16} />
-                          Add Book to Bookshelf
-                        </button>
-                        <button
                           onClick={fetchBookshelfBooks}
                           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
                         >
                           <RefreshCw size={16} />
                           Refresh Books
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Bookshelf Status Summary */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-green-800 font-semibold">Available</p>
+                            <p className="text-2xl font-bold text-green-600">{availableBooksCount}</p>
+                          </div>
+                          <Archive className="w-8 h-8 text-green-500" />
+                        </div>
+                      </div>
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-blue-800 font-semibold">Borrowed</p>
+                            <p className="text-2xl font-bold text-blue-600">{borrowedBooksCount}</p>
+                          </div>
+                          <Book className="w-8 h-8 text-blue-500" />
+                        </div>
+                      </div>
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-yellow-800 font-semibold">Maintenance</p>
+                            <p className="text-2xl font-bold text-yellow-600">{maintenanceBooksCount}</p>
+                          </div>
+                          <Settings className="w-8 h-8 text-yellow-500" />
+                        </div>
                       </div>
                     </div>
 
@@ -539,72 +527,65 @@ const SmartIOTPage = () => {
                           <div className="col-span-full text-center py-12">
                             <Book className="mx-auto mb-4 text-gray-400" size={48} />
                             <p className="text-gray-500 text-lg">No books available in the bookshelf</p>
-                            <p className="text-gray-400">Add books to the bookshelf to see them here</p>
+                            <p className="text-gray-400">Books are added to the bookshelf during maintenance mode</p>
                           </div>
                         ) : (
-                            bookshelfBooks.map((inventoryItem) => (
+                          bookshelfBooks.map((inventoryItem) => (
                             <div
-                              key={inventoryItem.id}
+                              key={inventoryItem.thesis_book_id}
                               className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm hover:shadow-md transition-shadow"
                             >
                               <div className="flex justify-between items-start mb-4">
-                                <div>
+                                <div className="flex-1">
                                   <h3 className="font-bold text-lg text-gray-800 mb-1 line-clamp-2">
-                                    {inventoryItem?.thesestwo?.title || 'Unknown Title'}
+                                    {inventoryItem.theses?.title || 'Unknown Title'}
                                   </h3>
                                   <p className="text-sm text-gray-600 mb-2">
-                                    by {inventoryItem?.thesestwo?.author || 'Unknown Author'}
+                                    by {inventoryItem.theses?.author || 'Unknown Author'}
                                   </p>
                                 </div>
                                 <span className={`text-xs px-2 py-1 rounded-full ${
-                                  inventoryItem?.current_status === 'available' 
+                                  inventoryItem.current_status === 'available' 
                                     ? 'bg-green-100 text-green-800'
-                                    : inventoryItem?.current_status === 'maintenance'
-                                    ? 'bg-yellow-100 text-yellow-800'
-                                    : 'bg-red-100 text-red-800'
+                                    : inventoryItem.current_status === 'borrowed'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-yellow-100 text-yellow-800'
                                 }`}>
-                                  {inventoryItem?.current_status?.charAt(0)?.toUpperCase() + inventoryItem?.current_status?.slice(1) || 'Unknown'}
+                                  {inventoryItem.current_status?.charAt(0)?.toUpperCase() + inventoryItem.current_status?.slice(1) || 'Unknown'}
                                 </span>
                               </div>
                               
                               <div className="space-y-2 mb-4">
                                 <div className="flex justify-between text-sm">
                                   <span className="text-gray-500">College:</span>
-                                  <span className="font-medium">{inventoryItem?.thesestwo?.college || 'N/A'}</span>
+                                  <span className="font-medium text-right">{inventoryItem.theses?.college_department || 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between text-sm">
                                   <span className="text-gray-500">Batch:</span>
-                                  <span className="font-medium">{inventoryItem?.thesestwo?.batch || 'N/A'}</span>
+                                  <span className="font-medium">{inventoryItem.theses?.batch || 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between text-sm">
                                   <span className="text-gray-500">Location:</span>
-                                  <span className="font-medium">{inventoryItem?.bookshelf_location || 'Unknown'}</span>
+                                  <span className="font-medium">{inventoryItem.book_location || 'Unknown'}</span>
                                 </div>
                                 <div className="flex justify-between text-sm">
-                                  <span className="text-gray-500">Condition:</span>
-                                  <span className="font-medium capitalize">{inventoryItem?.physical_condition || 'unknown'}</span>
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-gray-500">Last Scan:</span>
-                                  <span className="font-medium">
-                                    {inventoryItem?.last_scan ? new Date(inventoryItem.last_scan).toLocaleDateString() : 'Never'}
-                                  </span>
+                                  <span className="text-gray-500">Inventory ID:</span>
+                                  <span className="font-medium">#{inventoryItem.thesis_book_id}</span>
                                 </div>
                               </div>
 
                               <div className="flex gap-2">
                                 <select
-                                  value={inventoryItem?.current_status || 'available'}
-                                  onChange={(e) => updateBookStatus(inventoryItem.id, e.target.value)}
+                                  value={inventoryItem.current_status || 'available'}
+                                  onChange={(e) => updateBookStatus(inventoryItem.thesis_book_id, e.target.value)}
                                   className="flex-1 bg-gray-100 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
                                 >
                                   <option value="available">Available</option>
                                   <option value="borrowed">Borrowed</option>
                                   <option value="maintenance">Maintenance</option>
-                                  <option value="reserved">Reserved</option>
                                 </select>
                                 <button
-                                  onClick={() => removeBookFromShelf(inventoryItem.id)}
+                                  onClick={() => removeBookFromShelf(inventoryItem.thesis_book_id)}
                                   className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded text-sm transition-colors"
                                   title="Remove from Bookshelf"
                                 >
@@ -616,247 +597,102 @@ const SmartIOTPage = () => {
                         )}
                       </div>
                     )}
-
-                    {/* Add Book Modal */}
-                    {showAddBookModal && (
-                      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                        <div className="bg-white rounded-lg p-6 w-full max-w-md">
-                          <h3 className="text-xl font-bold mb-4">Add Book to Bookshelf</h3>
-                          
-                          <div className="space-y-4">
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Select Thesis
-                              </label>
-                              <select
-                                value={selectedThesis}
-                                onChange={(e) => setSelectedThesis(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              >
-                                <option value="">Choose a thesis...</option>
-                                {allTheses.map((thesis) => (
-                                  <option key={thesis.thesis_id} value={thesis.thesis_id}>
-                                    {thesis.title} - {thesis.author}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Bookshelf Location
-                              </label>
-                              <input
-                                type="text"
-                                value={bookshelfLocation}
-                                onChange={(e) => setBookshelfLocation(e.target.value)}
-                                placeholder="e.g., Shelf A1, Row 3"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Physical Condition
-                              </label>
-                              <select
-                                value={physicalCondition}
-                                onChange={(e) => setPhysicalCondition(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              >
-                                <option value="excellent">Excellent</option>
-                                <option value="good">Good</option>
-                                <option value="fair">Fair</option>
-                                <option value="poor">Poor</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <div className="flex gap-2 mt-6">
-                            <button
-                              onClick={() => setShowAddBookModal(false)}
-                              className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded transition-colors"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              onClick={addBookToBookshelf}
-                              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded transition-colors"
-                            >
-                              Add to Bookshelf
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 
                 {/* System Settings Tab */}
                 {activeTab === 'system-settings' && (
                   <div>
-                    <h2 className="text-2xl font-semibold mb-6">IoT Bookshelf System Configuration</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Auto Logging Settings */}
-                      <div className="bg-gray-50 p-6 rounded-lg border">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                          <Database size={18} />
-                          Logging Settings
-                        </h3>
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <label className="text-sm font-medium text-gray-700">
-                              Enable Auto Logging
-                            </label>
-                            <input
-                              type="checkbox"
-                              checked={settings.autoLogging}
-                              onChange={(e) => setSettings({ ...settings, autoLogging: e.target.checked })}
-                              className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Log Retention (Days)
-                            </label>
-                            <input
-                              type="number"
-                              value={settings.logRetentionDays}
-                              onChange={(e) => setSettings({ ...settings, logRetentionDays: parseInt(e.target.value) })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              min="1"
-                              max="365"
-                            />
-                          </div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-2xl font-bold text-gray-800">System Settings</h2>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-sm text-gray-600">Device Status</p>
+                          <select
+                            value={settings.device_status}
+                            onChange={(e) => setSettings({ ...settings, device_status: e.target.value })}
+                            className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                          >
+                            <option value="active">Active</option>
+                            <option value="maintenance">Maintenance</option>
+                          </select>
                         </div>
-                      </div>
-
-                      {/* Bookshelf Settings */}
-                      <div className="bg-gray-50 p-6 rounded-lg border">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                          <Archive size={18} />
-                          Bookshelf Settings
-                        </h3>
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Bookshelf Capacity
-                            </label>
-                            <input
-                              type="number"
-                              value={settings.bookshelfCapacity}
-                              onChange={(e) => setSettings({ ...settings, bookshelfCapacity: parseInt(e.target.value) })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              min="1"
-                              max="200"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Scan Timeout (Seconds)
-                            </label>
-                            <input
-                              type="number"
-                              value={settings.scanTimeout}
-                              onChange={(e) => setSettings({ ...settings, scanTimeout: parseInt(e.target.value) })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              min="5"
-                              max="120"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* IoT Device Settings */}
-                      <div className="bg-gray-50 p-6 rounded-lg border">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                          <Cpu size={18} />
-                          Device Settings
-                        </h3>
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Device Status
-                            </label>
-                            <select
-                              value={settings.iotDeviceStatus}
-                              onChange={(e) => setSettings({ ...settings, iotDeviceStatus: e.target.value })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                            >
-                              <option value="online">Online</option>
-                              <option value="offline">Offline</option>
-                              <option value="maintenance">Maintenance</option>
-                            </select>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <label className="text-sm font-medium text-gray-700">
-                              Auto Sync
-                            </label>
-                            <input
-                              type="checkbox"
-                              checked={settings.autoSync}
-                              onChange={(e) => setSettings({ ...settings, autoSync: e.target.checked })}
-                              className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Borrowing Settings */}
-                      <div className="bg-gray-50 p-6 rounded-lg border">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                          <BarChart size={18} />
-                          Borrowing Settings
-                        </h3>
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Maximum Borrow Duration (Days)
-                            </label>
-                            <input
-                              type="number"
-                              value={settings.maxBorrowDuration}
-                              onChange={(e) => setSettings({ ...settings, maxBorrowDuration: parseInt(e.target.value) })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                              min="1"
-                              max="30"
-                            />
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <label className="text-sm font-medium text-gray-700">
-                              Real-time Updates
-                            </label>
-                            <input
-                              type="checkbox"
-                              checked={settings.realTimeUpdates}
-                              onChange={(e) => setSettings({ ...settings, realTimeUpdates: e.target.checked })}
-                              className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
-                            />
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <label className="text-sm font-medium text-gray-700">
-                              Enable Notifications
-                            </label>
-                            <input
-                              type="checkbox"
-                              checked={settings.enableNotifications}
-                              onChange={(e) => setSettings({ ...settings, enableNotifications: e.target.checked })}
-                              className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
-                            />
-                          </div>
-                        </div>
+                        <button
+                          onClick={handleSaveSettings}
+                          disabled={loading}
+                          className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-md transition-colors flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <Save size={16} />
+                          {loading ? 'Saving...' : 'Save Settings'}
+                        </button>
                       </div>
                     </div>
 
-                    <div className="mt-6 flex justify-end">
-                      <button
-                        onClick={handleSaveSettings}
-                        disabled={loading}
-                        className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-md transition-colors flex items-center gap-2 disabled:opacity-50"
-                      >
-                        <Save size={16} />
-                        {loading ? 'Saving...' : 'Save Settings'}
-                      </button>
+                    <div className="bg-gray-50 rounded-lg p-6 border">
+                      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <Cpu size={18} />
+                        Device Information
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <h4 className="font-medium text-gray-700 mb-2">Current Status</h4>
+                          <p className={`text-lg font-semibold ${
+                            settings.device_status === 'active' ? 'text-green-600' : 'text-yellow-600'
+                          }`}>
+                            {settings.device_status === 'active' ? '🟢 Active' : '🟡 Maintenance'}
+                          </p>
+                          <p className="text-sm text-gray-600 mt-1">
+                            {settings.device_status === 'active' 
+                              ? 'Device is operational and accepting scans'
+                              : 'Device is in maintenance mode - book operations disabled'
+                            }
+                          </p>
+                        </div>
+
+                        <div>
+                          <h4 className="font-medium text-gray-700 mb-2">Bookshelf Statistics</h4>
+                          <p className="text-lg font-semibold text-gray-800">
+                            {availableBooksCount} / {bookshelfBooks.length} books available
+                          </p>
+                          <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                            <div 
+                              className="bg-blue-600 h-2 rounded-full" 
+                              style={{ 
+                                width: `${bookshelfBooks.length > 0 ? 
+                                  (availableBooksCount / bookshelfBooks.length) * 100 
+                                  : 0}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6">
+                        <h4 className="font-medium text-gray-700 mb-2">Device Status Effects</h4>
+                        <ul className="text-sm text-gray-600 space-y-2">
+                          <li className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                            <span>
+                              <strong>Active:</strong> Books can be scanned, borrowed, and returned normally
+                            </span>
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
+                            <span>
+                              <strong>Maintenance:</strong> Book operations disabled - use this mode for adding/removing books physically
+                            </span>
+                          </li>
+                        </ul>
+                      </div>
+
+                      <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <h4 className="font-medium text-yellow-800 mb-2">📝 Note about Book Management</h4>
+                        <p className="text-sm text-yellow-700">
+                          Books are physically added to the bookshelf during maintenance mode. 
+                          The inventory is automatically updated when books are scanned by the IoT system.
+                          Use maintenance mode when you need to physically rearrange or add new books to the shelf.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}

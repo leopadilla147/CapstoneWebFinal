@@ -27,57 +27,60 @@ function SearchResultsPage() {
   const [batches, setBatches] = useState([]);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Fetch filter options
+  useEffect(() => {
+    fetchResults(query);
+  }, [query, filters]);
+
+  
   useEffect(() => {
     fetchFilterOptions();
   }, []);
 
-  // Fetch results only when query changes (from URL) or filters change
   useEffect(() => {
     if (query) {
       fetchResults(query);
     }
-  }, [query, filters]); // Only refresh when query or filters change
+  }, [query, filters]);
 
   const fetchFilterOptions = async () => {
     try {
+      // Updated table name and column name
       const { data: collegeData } = await supabase
-        .from('thesestwo')
-        .select('college')
-        .not('college', 'is', null);
+        .from('theses')
+        .select('college_department')
+        .not('college_department', 'is', null);
 
       const { data: batchData } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('batch')
         .not('batch', 'is', null);
 
-      setColleges([...new Set(collegeData?.map(item => item.college) || [])]);
+      setColleges([...new Set(collegeData?.map(item => item.college_department) || [])]);
       setBatches([...new Set(batchData?.map(item => item.batch) || [])].sort().reverse());
     } catch (err) {
       console.error('Error fetching filter options:', err);
     }
   };
 
-  // SIMPLIFIED: Use basic search that works
   const fetchResults = useCallback(async (searchQuery = '') => {
     try {
       setLoading(true);
       setError(null);
 
       let queryBuilder = supabase
-        .from('thesestwo')
-        .select('thesis_id, title, author, abstract, college, batch, created_at, qr_code_url');
+        .from('theses')
+        .select('thesis_id, title, author, abstract, college_department, batch, created_at, qr_code_url');
 
-      // Apply search - using simple ilike for now
+      // Apply search only if there's a search query
       if (searchQuery.trim()) {
         queryBuilder = queryBuilder.or(
-          `title.ilike.%${searchQuery}%,author.ilike.%${searchQuery}%,abstract.ilike.%${searchQuery}%,college.ilike.%${searchQuery}%`
+          `title.ilike.%${searchQuery}%,author.ilike.%${searchQuery}%,abstract.ilike.%${searchQuery}%,college_department.ilike.%${searchQuery}%`
         );
       }
 
       // Apply filters
       if (filters.college) {
-        queryBuilder = queryBuilder.eq('college', filters.college);
+        queryBuilder = queryBuilder.eq('college_department', filters.college);
       }
       if (filters.batch) {
         queryBuilder = queryBuilder.eq('batch', filters.batch);
@@ -98,28 +101,23 @@ function SearchResultsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters]); // Keep filters as dependency
+  }, [filters]);
 
-  // Handle search form submission
   const handleSearch = (e) => {
     e.preventDefault();
     if (searchInput.trim()) {
-      // Update URL and let useEffect handle the fetch
       navigate(`/results?q=${encodeURIComponent(searchInput)}`);
     }
   };
 
-  // Handle Enter key in search input
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
       handleSearch(e);
     }
   };
 
-  // Handle filter changes - update state but don't fetch yet
   const handleFilterChange = (newFilters) => {
     setFilters(newFilters);
-    // The useEffect will automatically trigger because filters changed
   };
 
   const clearFilters = () => {
@@ -151,15 +149,7 @@ function SearchResultsPage() {
     >
       <CommonHeader isAuthenticated={false} />
 
-      {/* Main Content - Full Width */}
       <div className="w-full px-4 lg:px-8 py-6">
-        {/* Search Header 
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2">THESIS HUB</h1>
-          <p className="text-xl text-white/90">Search Research Database</p>
-        </div>
-        */}
-        {/* Search Bar - Full Width */}
         <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-6 w-full">
           <form onSubmit={handleSearch} className="mb-4">
             <div className="flex gap-4">
@@ -202,7 +192,6 @@ function SearchResultsPage() {
             </div>
           </form>
 
-          {/* Full-Width Filters */}
           {showFilters && (
             <div className="border-t pt-6 mt-6">
               <div className="flex justify-between items-center mb-4">
@@ -221,7 +210,6 @@ function SearchResultsPage() {
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {/* College Filter */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <BookOpen size={16} />
@@ -239,7 +227,6 @@ function SearchResultsPage() {
                   </select>
                 </div>
 
-                {/* Batch Filter */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <Calendar size={16} />
@@ -257,7 +244,6 @@ function SearchResultsPage() {
                   </select>
                 </div>
 
-                {/* Sort By */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <SortAsc size={16} />
@@ -271,11 +257,10 @@ function SearchResultsPage() {
                     <option value="title">Title</option>
                     <option value="author">Author</option>
                     <option value="created_at">Date Added</option>
-                    <option value="college">College</option>
+                    <option value="college_department">College</option>
                   </select>
                 </div>
 
-                {/* Sort Order */}
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-700">
                     Sort Order
@@ -291,7 +276,6 @@ function SearchResultsPage() {
                 </div>
               </div>
 
-              {/* Active Filters Display */}
               {hasActiveFilters && (
                 <div className="mt-4 flex flex-wrap gap-2">
                   {filters.college && (
@@ -316,7 +300,6 @@ function SearchResultsPage() {
           )}
         </div>
 
-        {/* Results Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-3xl font-bold text-white mb-2">
@@ -330,14 +313,12 @@ function SearchResultsPage() {
           </div>
         </div>
 
-        {/* Loading State */}
         {loading && (
           <div className="flex justify-center items-center h-64">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
           </div>
         )}
 
-        {/* Error State */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
             <p className="text-red-600 text-lg mb-2">Error loading results</p>
@@ -351,7 +332,6 @@ function SearchResultsPage() {
           </div>
         )}
 
-        {/* No Results */}
         {!loading && !error && results.length === 0 && (
           <div className="bg-white rounded-2xl shadow-md p-12 text-center w-full">
             <BookOpen className="w-16 h-16 text-gray-400 mx-auto mb-4" />
@@ -376,7 +356,6 @@ function SearchResultsPage() {
           </div>
         )}
 
-        {/* Results Grid - Full Width */}
         {!loading && !error && results.length > 0 && (
           <div className="grid gap-6 w-full">
             {results.map((thesis) => (
@@ -386,7 +365,6 @@ function SearchResultsPage() {
               >
                 <div className="p-6">
                   <div className="flex flex-col lg:flex-row gap-6">
-                    {/* Thesis Info - Full Width */}
                     <div className="flex-1 min-w-0">
                       <h2 
                         className="text-xl font-bold text-gray-800 mb-3 leading-tight"
@@ -406,7 +384,7 @@ function SearchResultsPage() {
                         <div className="flex items-center gap-2 text-gray-600">
                           <BookOpen size={16} />
                           <span className="font-medium">College:</span>
-                          <span>{thesis.college}</span>
+                          <span>{thesis.college_department}</span>
                         </div>
                         {thesis.batch && (
                           <div className="flex items-center gap-2 text-gray-600">
@@ -428,7 +406,6 @@ function SearchResultsPage() {
                       </div>
                     </div>
 
-                    {/* QR Code Sidebar */}
                     {thesis.qr_code_url && (
                       <div className="lg:w-48 flex-shrink-0">
                         <div className="text-center">

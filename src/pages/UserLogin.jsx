@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, LogIn, User, ArrowLeft } from 'lucide-react';
 import { supabase } from '../connect-supabase.js';
-import CommonHeader from '../components/CommonHeader';
 import bg from '../assets/bg-gradient.png';
-import logo from '../assets/logo.png'; // Import the logo
+import logo from '../assets/logo.png';
+import CommonHeader from '../components/CommonHeader.jsx';
 
 const UserLogin = () => {
   const [username, setUsername] = useState('');
@@ -35,6 +35,7 @@ const UserLogin = () => {
       return;
     }
 
+    // Check if user is already logged in as admin
     if (currentUser && currentUser.role === 'admin') {
       setError('You are currently logged in as an administrator. Please log out first before accessing student portal.');
       setLoading(false);
@@ -42,44 +43,115 @@ const UserLogin = () => {
     }
 
     try {
-      const { data: user, error } = await supabase
+      // Check in users table - REMOVED STATUS FROM SELECT
+      const { data: user, error: userError } = await supabase
         .from('users')
-        .select('id, username, password, role, full_name, status')
+        .select('user_id, username, password, full_name, email')
         .eq('username', username)
         .maybeSingle();
 
-      if (error || !user) {
+      if (userError) {
+        console.error('Database error:', userError);
+        setError('Database error. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      if (!user) {
         setError('Invalid username or password');
         setLoading(false);
         return;
       }
 
-      if (user.status !== 'active') {
-        setError('Your account is inactive. Please contact administrator.');
-        setLoading(false);
-        return;
-      }
-
+      // REMOVED STATUS CHECK SINCE COLUMN DOESN'T EXIST
+      // Verify password
       if (user.password !== password) {
         setError('Invalid username or password');
         setLoading(false);
         return;
       }
 
-      if (user.role !== 'user') {
-        setError('Access denied. This portal is for students only.');
+      // Check if user is an admin (should not be able to login here)
+      const { data: adminData, error: adminError } = await supabase
+        .from('admins')
+        .select('admin_id')
+        .eq('user_id', user.user_id)
+        .maybeSingle();
+
+      if (adminError) {
+        console.error('Admin check error:', adminError);
+        // Continue with login even if admin check fails
+      }
+
+      if (adminData) {
+        setError('Administrators must use the admin login portal.');
         setLoading(false);
         return;
       }
 
-      localStorage.setItem('user', JSON.stringify({
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        fullName: user.full_name
-      }));
+      // Check if user is a student
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .select('student_id, year_level, college_department, course')
+        .eq('user_id', user.user_id)
+        .maybeSingle();
 
-      navigate('/user-dashboard');
+      if (studentError) {
+        console.error('Student check error:', studentError);
+        // Continue with login even if student check fails
+      }
+
+      let role = 'user';
+      let studentInfo = null;
+
+      if (studentData) {
+        role = 'student';
+        studentInfo = {
+          studentId: studentData.student_id,
+          yearLevel: studentData.year_level,
+          department: studentData.college_department,
+          course: studentData.course
+        };
+      }
+
+      // Update only updated_at timestamp (REMOVED STATUS UPDATE)
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ 
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', user.user_id);
+
+      if (updateError) {
+        console.error('Error updating user:', updateError);
+        // Continue with login even if update fails
+      }
+
+      // Store user session
+      const userSession = {
+        id: user.user_id,
+        username: user.username,
+        role: role,
+        fullName: user.full_name,
+        email: user.email
+      };
+
+      // Add student info if available
+      if (studentInfo) {
+        userSession.studentId = studentInfo.studentId;
+        userSession.yearLevel = studentInfo.yearLevel;
+        userSession.department = studentInfo.department;
+        userSession.course = studentInfo.course;
+      }
+
+      localStorage.setItem('user', JSON.stringify(userSession));
+
+      // Redirect based on role
+      if (role === 'student') {
+        navigate('/user-dashboard');
+      } else {
+        navigate('/user-dashboard');
+      }
 
     } catch (err) {
       console.error('Login error:', err);
@@ -89,57 +161,32 @@ const UserLogin = () => {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('user');
-    setCurrentUser(null);
-    navigate('/');
-  };
-
+  // ... (rest of the JSX remains the same)
   return (
     <div
       className="w-screen min-h-screen bg-cover bg-center bg-no-repeat flex flex-col"
       style={{ backgroundImage: `url(${bg})` }}
     >
-      {/* Custom Header for Login Page with Back Button on Right */}
-      <header className="w-full flex items-center justify-between px-6 py-4 text-white">
-        {/* Logo and College Name */}
-        <div className="flex items-center space-x-4">
-          <img src={logo} alt="CNSC Logo" className="w-16 h-16" />
-          <div>
-            <h1 className="font-bold text-lg leading-tight">CAMARINES NORTE STATE COLLEGE</h1>
-            <p className="text-sm">F. Pimentel Avenue, Daet, Camarines Norte, Philippines</p>
-          </div>
-        </div>
-        
-        {/* Back Button on Top Right */}
-        <button 
-          onClick={() => navigate('/')}
-          className="flex items-center gap-2 text-white hover:text-gray-200 transition-colors p-2 bg-white/20 hover:bg-white/30 rounded-lg backdrop-blur-sm"
-        >
-          <ArrowLeft size={20} />
-          <span>Back to Home</span>
-        </button>
-      </header>
+      {/* Header */}
+      
+      <CommonHeader isAuthenticated={false} hideLoginButton={true} />
 
       {/* Main Content */}
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="max-w-md w-full">
-          {/* Login Card */}
           <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8">
-            {/* Header */}
             <div className="text-center mb-8">
               <div className="flex justify-center mb-4">
                 <div className="bg-red-100 p-3 rounded-full">
                   <User className="w-8 h-8 text-red-600" />
                 </div>
               </div>
-              <h2 className="text-3xl font-bold text-red-800 mb-2">Student Login</h2>
+              <h2 className="text-3xl font-bold text-red-800 mb-2">Thesis Guard Login</h2>
               <p className="text-gray-600">
-                Access your Thesis Hub account
+                Access your Thesis Guard account
               </p>
             </div>
 
-            {/* Login Form */}
             <form onSubmit={handleLogin} className="space-y-6">
               {error && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -147,7 +194,6 @@ const UserLogin = () => {
                 </div>
               )}
 
-              {/* Username Field */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Username
@@ -165,7 +211,6 @@ const UserLogin = () => {
                 </div>
               </div>
 
-              {/* Password Field */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Password
@@ -189,7 +234,6 @@ const UserLogin = () => {
                 </div>
               </div>
 
-              {/* Login Button */}
               <button
                 type="submit"
                 disabled={loading || (currentUser && currentUser.role === 'admin')}
@@ -208,7 +252,6 @@ const UserLogin = () => {
                 )}
               </button>
 
-              {/* Signup Link */}
               <div className="text-center">
                 <p className="text-gray-600">
                   Don't have an account?{' '}
@@ -218,7 +261,6 @@ const UserLogin = () => {
                 </p>
               </div>
 
-              {/* Admin Login Link */}
               <div className="text-center border-t pt-4 mt-4">
                 <p className="text-sm text-gray-500">
                   Are you an administrator?{' '}

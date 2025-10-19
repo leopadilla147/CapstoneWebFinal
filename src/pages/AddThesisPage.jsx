@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Upload, FileText, User, BookOpen, Calendar, Eye } from 'lucide-react';
 import bg from "../assets/bg-gradient.png";
-import {supabase} from "../connect-supabase.js";
+import { supabase } from "../connect-supabase.js";
 import QRCode from "qrcode";
 import Header from '../components/Header';
 import SideNav from '../components/SideNav';
@@ -13,7 +13,8 @@ const AddThesisPage = () => {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [abstract, setAbstract] = useState('');
-  const [college, setCollege] = useState('');
+  const [selectedCollege, setSelectedCollege] = useState('');
+  const [selectedCourse, setSelectedCourse] = useState('');
   const [batch, setBatch] = useState('');
   const [file, setFile] = useState(null);
   const [error, setError] = useState('');
@@ -24,19 +25,73 @@ const AddThesisPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recentTheses, setRecentTheses] = useState([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
+  const [colleges, setColleges] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [loadingColleges, setLoadingColleges] = useState(true);
+  const [otherDepartment, setOtherDepartment] = useState('');
+  const [otherCourse, setOtherCourse] = useState('');
+
+  // Fetch colleges and recent theses
+  useEffect(() => {
+    fetchCollegesData();
+    fetchRecentTheses();
+  }, []);
+
+  // Fetch courses when college is selected
+  useEffect(() => {
+    if (selectedCollege && selectedCollege !== 'other') {
+      fetchCoursesData(selectedCollege);
+    } else {
+      setCourses([]);
+      setSelectedCourse('');
+    }
+  }, [selectedCollege]);
+
+  const fetchCollegesData = async () => {
+    try {
+      setLoadingColleges(true);
+      const { data, error } = await supabase
+        .from('college_departments')
+        .select('department_id, department_name, department_code')
+        .order('department_name');
+
+      if (error) throw error;
+      setColleges(data || []);
+    } catch (error) {
+      console.error('Error fetching colleges:', error);
+      setError('Failed to load colleges');
+    } finally {
+      setLoadingColleges(false);
+    }
+  };
+
+  const fetchCoursesData = async (departmentId) => {
+    try {
+      const { data, error } = await supabase
+        .from('courses')
+        .select('course_id, course_name, course_code')
+        .eq('department_id', departmentId)
+        .order('course_name');
+
+      if (error) throw error;
+      setCourses(data || []);
+    } catch (error) {
+      console.error('Error fetching courses:', error);
+      setError('Failed to load courses');
+    }
+  };
 
   // Fetch recent theses from Supabase
   const fetchRecentTheses = async () => {
     try {
       setLoadingRecent(true);
       const { data, error } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(5);
 
       if (error) throw error;
-
       setRecentTheses(data || []);
     } catch (error) {
       console.error('Error fetching recent theses:', error);
@@ -56,7 +111,7 @@ const AddThesisPage = () => {
     });
   };
 
-  // Get status based on creation date (example logic)
+  // Get status based on creation date
   const getThesisStatus = (createdAt) => {
     const createdDate = new Date(createdAt);
     const now = new Date();
@@ -79,13 +134,10 @@ const AddThesisPage = () => {
 
   // View thesis details
   const handleViewThesis = (thesis) => {
-    // You can implement a modal or navigate to a details page
-    window.open(thesis.file_url, '_blank');
+    if (thesis.pdf_file_url) {
+      window.open(thesis.pdf_file_url, '_blank');
+    }
   };
-
-  useEffect(() => {
-    fetchRecentTheses();
-  }, []);
 
   const generateAndUploadQRCode = async (fileUrl) => {
     try {
@@ -123,8 +175,8 @@ const AddThesisPage = () => {
     setSuccess('');
     setIsSubmitting(true);
 
-    if (!title || !author || !abstract || !college || !batch || !file) {
-      setError('Please fill in all fields and upload a file.');
+    if (!title || !author || !abstract || !selectedCollege || !batch || !file) {
+      setError('Please fill in all required fields and upload a file.');
       setIsSubmitting(false);
       return;
     }
@@ -150,19 +202,28 @@ const AddThesisPage = () => {
 
       const qrCodeImageUrl = await generateAndUploadQRCode(publicUrl);
 
+      // Determine department name
+      let departmentName = selectedCollege;
+      if (selectedCollege === 'other') {
+        departmentName = otherDepartment;
+      } else {
+        const selectedDept = colleges.find(dept => dept.department_id == selectedCollege);
+        departmentName = selectedDept ? selectedDept.department_name : selectedCollege;
+      }
+
+      // Insert into theses table
       const { data, error: insertError } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .insert([
           { 
             title, 
             author, 
             abstract, 
-            college, 
+            college_department: departmentName,
             batch, 
-            file_url: publicUrl,
-            file_name: fileName,
-            qr_code_url: qrCodeImageUrl,
-            created_at: new Date().toISOString()
+            pdf_file_name: fileName,
+            pdf_file_url: publicUrl,
+            qr_code_url: qrCodeImageUrl
           }
         ])
         .select();
@@ -181,9 +242,12 @@ const AddThesisPage = () => {
       setTitle('');
       setAuthor('');
       setAbstract('');
-      setCollege('');
+      setSelectedCollege('');
+      setSelectedCourse('');
       setBatch('');
       setFile(null);
+      setOtherDepartment('');
+      setOtherCourse('');
 
     } catch (err) {
       console.error('Error:', err);
@@ -233,7 +297,7 @@ const AddThesisPage = () => {
           <div className="mt-12 bg-white/80 backdrop-blur-sm rounded-2xl p-8 shadow-lg">
             {/* Page Header */}
             <div className="mb-8">
-              <h1 className="text-4xl font-bold text-black mb-2">THESIS HUB</h1>
+              <h1 className="text-4xl font-bold text-black mb-2">THESIS GUARD</h1>
               <p className="text-xl font-semibold text-black">Add New Thesis</p>
               <p className="text-black/80 mt-2">Upload and manage academic theses with comprehensive details and QR code generation</p>
             </div>
@@ -290,19 +354,76 @@ const AddThesisPage = () => {
                       🎓 College *
                     </label>
                     <select 
-                      value={college}
-                      onChange={(e) => setCollege(e.target.value)}
+                      value={selectedCollege}
+                      onChange={(e) => setSelectedCollege(e.target.value)}
                       className="w-full p-4 rounded-lg bg-gray-100 border border-gray-300 text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       required
+                      disabled={loadingColleges}
                     >
                       <option value="">Select College</option>
-                      <option value="College of Arts and Sciences">College of Arts and Sciences</option>
-                      <option value="College of Business and Public Administration">College of Business and Public Administration</option>
-                      <option value="College of Education">College of Education</option>
-                      <option value="College of Engineering">College of Engineering</option>
-                      <option value="College of Computing and Multimedia Studies">College of Information and Communications Technology</option>
+                      {colleges.map(college => (
+                        <option key={college.department_id} value={college.department_id}>
+                          {college.department_name}
+                        </option>
+                      ))}
+                      <option value="other">Other (Please specify)</option>
                     </select>
                   </div>
+
+                  {/* Other Department Input */}
+                  {selectedCollege === 'other' && (
+                    <div className="space-y-2 animate-fadeIn">
+                      <label className="flex items-center gap-2 text-lg font-semibold text-gray-700">
+                        Specify Department *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter department name..."
+                        value={otherDepartment}
+                        onChange={(e) => setOtherDepartment(e.target.value)}
+                        className="w-full p-4 rounded-lg bg-gray-100 border border-gray-300 text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  {/* Course - Only show if department is selected and not "other" */}
+                  {selectedCollege && selectedCollege !== 'other' && (
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-lg font-semibold text-gray-700">
+                        📚 Course
+                      </label>
+                      <select 
+                        value={selectedCourse}
+                        onChange={(e) => setSelectedCourse(e.target.value)}
+                        className="w-full p-4 rounded-lg bg-gray-100 border border-gray-300 text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      >
+                        <option value="">Select Course</option>
+                        {courses.map(course => (
+                          <option key={course.course_id} value={course.course_id}>
+                            {course.course_name}
+                          </option>
+                        ))}
+                        <option value="other">Other (Please specify)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Other Course Input */}
+                  {selectedCourse === 'other' && (
+                    <div className="space-y-2 animate-fadeIn">
+                      <label className="flex items-center gap-2 text-lg font-semibold text-gray-700">
+                        Specify Course
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter course name..."
+                        value={otherCourse}
+                        onChange={(e) => setOtherCourse(e.target.value)}
+                        className="w-full p-4 rounded-lg bg-gray-100 border border-gray-300 text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      />
+                    </div>
+                  )}
 
                   {/* Batch */}
                   <div className="space-y-2">
@@ -310,19 +431,14 @@ const AddThesisPage = () => {
                       <Calendar size={20} />
                       Academic Batch *
                     </label>
-                    <select 
+                    <input
+                      type="text"
+                      placeholder="Enter academic batch (e.g., 2024)"
                       value={batch}
                       onChange={(e) => setBatch(e.target.value)}
                       className="w-full p-4 rounded-lg bg-gray-100 border border-gray-300 text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       required
-                    >
-                      <option value="">Select Batch</option>
-                      <option value="2020">2020</option>
-                      <option value="2021">2021</option>
-                      <option value="2022">2022</option>
-                      <option value="2023">2023</option>
-                      <option value="2024">2024</option>
-                    </select>
+                    />
                   </div>
                 </div>
 
@@ -483,7 +599,7 @@ const AddThesisPage = () => {
                   </thead>
                   <tbody>
                     {recentTheses.map((thesis, index) => (
-                      <tr key={thesis.thesisID || index} className="hover:bg-gray-50 transition-colors">
+                      <tr key={thesis.thesis_id || index} className="hover:bg-gray-50 transition-colors">
                         <td className="border border-gray-300 px-4 py-3">
                           <div className="max-w-xs truncate" title={thesis.title}>
                             {thesis.title}
@@ -492,7 +608,7 @@ const AddThesisPage = () => {
                         <td className="border border-gray-300 px-4 py-3">{thesis.author}</td>
                         <td className="border border-gray-300 px-4 py-3">
                           <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                            {thesis.college}
+                            {thesis.college_department}
                           </span>
                         </td>
                         <td className="border border-gray-300 px-4 py-3">{thesis.batch}</td>
@@ -506,7 +622,7 @@ const AddThesisPage = () => {
                           <button
                             onClick={() => handleViewThesis(thesis)}
                             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm flex items-center gap-1"
-                            disabled={!thesis.file_url}
+                            disabled={!thesis.pdf_file_url}
                           >
                             <Eye size={14} />
                             View

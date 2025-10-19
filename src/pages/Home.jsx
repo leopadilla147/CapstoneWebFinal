@@ -10,13 +10,13 @@ export default function ThesisHubHome() {
   const [stats, setStats] = useState({ totalTheses: 0, totalColleges: 0, recentUploads: 0 });
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [refreshHeader, setRefreshHeader] = useState(0); // Add refresh trigger
+  const [refreshHeader, setRefreshHeader] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchStats();
     checkUserStatus();
-  }, [refreshHeader]); // Add dependency
+  }, [refreshHeader]);
 
   const checkUserStatus = () => {
     const user = JSON.parse(localStorage.getItem('user'));
@@ -26,21 +26,21 @@ export default function ThesisHubHome() {
   const fetchStats = async () => {
     try {
       const { count: totalTheses } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('*', { count: 'exact', head: true });
 
       const { data: colleges } = await supabase
-        .from('thesestwo')
-        .select('college')
-        .not('college', 'is', null);
+        .from('theses')
+        .select('college_department')
+        .not('college_department', 'is', null);
 
-      const uniqueColleges = new Set(colleges?.map(item => item.college) || []);
+      const uniqueColleges = new Set(colleges?.map(item => item.college_department) || []);
       
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       
       const { count: recentUploads } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('*', { count: 'exact', head: true })
         .gte('created_at', thirtyDaysAgo.toISOString());
 
@@ -83,7 +83,7 @@ export default function ThesisHubHome() {
   const handleAdminLogin = () => {
     if (currentUser) {
       if (currentUser.role === 'user') {
-        alert('Please log out from your user account first before accessing the admin portal.');
+        alert('Please log out from your student account first before accessing the admin portal.');
         return;
       } else if (currentUser.role === 'admin') {
         navigate('/admin-homepage');
@@ -96,7 +96,12 @@ export default function ThesisHubHome() {
   const handleLogout = () => {
     localStorage.removeItem('user');
     setCurrentUser(null);
-    setRefreshHeader(prev => prev + 1); // Force header refresh
+    setRefreshHeader(prev => prev + 1);
+  };
+
+  // NEW FUNCTION: Handle Browse All Theses
+  const handleBrowseAllTheses = () => {
+    navigate('/results'); // Navigate without query to show all theses
   };
 
   return (
@@ -104,27 +109,23 @@ export default function ThesisHubHome() {
       className="w-full min-h-screen bg-cover bg-center bg-no-repeat flex flex-col"
       style={{ backgroundImage: `url(${bgImage})` }}
     >
-      {/* Common Header with key to force re-render */}
       <CommonHeader 
-        key={refreshHeader} // Force re-render when this changes
+        key={refreshHeader}
         isAuthenticated={!!currentUser} 
         onLogOut={handleLogout}
         hideLoginButton={true}
       />
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-center text-center text-black px-4 py-8">
-        {/* Hero Section */}
         <div className="max-w-4xl mx-auto mb-12">
           <h1 className="text-6xl font-extrabold text-red-800 drop-shadow-md mb-6">
-            THESIS HUB
+            THESIS GUARD
           </h1>
           <p className="text-xl text-gray-800 mb-8 leading-relaxed">
             Discover, explore, and access comprehensive research papers and theses from Camarines Norte State College. 
             A centralized platform for academic research and knowledge sharing.
           </p>
 
-          {/* Search Section */}
           <form onSubmit={handleSearch} className="mb-12">
             <div className="flex items-center bg-white shadow-2xl rounded-full overflow-hidden border-2 border-red-200 w-full max-w-2xl mx-auto transition-all duration-300 hover:border-red-300">
               <Search className="ml-4 text-gray-400 w-5 h-5" />
@@ -156,7 +157,6 @@ export default function ThesisHubHome() {
             </div>
           </form>
 
-          {/* Statistics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg">
               <BookOpen className="w-12 h-12 text-red-600 mx-auto mb-3" />
@@ -176,12 +176,12 @@ export default function ThesisHubHome() {
           </div>
         </div>
 
-        {/* Quick Links */}
         <div className="max-w-4xl mx-auto mt-8">
           <h3 className="text-2xl font-bold text-red-800 mb-6">Quick Access</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* UPDATED BUTTON: Browse All Theses */}
             <button 
-              onClick={() => navigate('/results')}
+              onClick={handleBrowseAllTheses}
               className="bg-red-700 hover:bg-red-800 text-white p-6 rounded-2xl text-lg font-semibold transition-all duration-300 hover:scale-105 flex items-center justify-center gap-3"
             >
               <BookOpen size={24} />
@@ -207,7 +207,6 @@ export default function ThesisHubHome() {
             )}
           </div>
           
-          {/* Admin Access - Separate Section */}
           <div className="mt-6 text-center">
             <p className="text-gray-600 mb-3">Administrator Access</p>
             <button 

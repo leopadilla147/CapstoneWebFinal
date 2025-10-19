@@ -1,7 +1,6 @@
-// components/SideNav.jsx
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, BookCheck, PlusCircle, Home, X, Users, Clock, AlertCircle, RefreshCw, Settings, User } from 'lucide-react';
+import { BookOpen, BookCheck, PlusCircle, Home, X, Users, Clock, AlertCircle, Settings, User, Cpu } from 'lucide-react';
 import logo from "../assets/logo.png";
 import { supabase } from '../connect-supabase.js';
 
@@ -26,15 +25,15 @@ const SideNav = ({ isOpen, onClose }) => {
     },
     { 
       path: "/add-thesis-page", 
-      label: "Adding of Thesis", 
+      label: "Add Thesis", 
       icon: PlusCircle,
       description: "Upload new research papers"
     },
     { 
       path: "/borrowed-thesis", 
-      label: "Student's Borrowed Thesis", 
+      label: "Thesis Access", 
       icon: BookCheck,
-      description: "Manage borrowing requests"
+      description: "Manage access requests"
     },
     { 
       path: "/thesis-viewing", 
@@ -43,10 +42,10 @@ const SideNav = ({ isOpen, onClose }) => {
       description: "Browse and edit theses"
     },
     { 
-    path: "/smart-iot-bookshelf", 
-    label: "IoT Bookshelf Management", 
-    icon: Settings, 
-    description: "Manage auto-logging and admin accounts"
+      path: "/smart-iot-bookshelf", 
+      label: "IoT Bookshelf", 
+      icon: Cpu, 
+      description: "Manage auto-logging and devices"
     },
     { 
       path: "/admin-account-settings", 
@@ -64,21 +63,29 @@ const SideNav = ({ isOpen, onClose }) => {
     try {
       setLoading(true);
       
-      // Get admin user from localStorage
       const storedUser = localStorage.getItem('user');
       if (storedUser) {
         const userData = JSON.parse(storedUser);
         
-        // If we have a user ID but need more details, fetch from database
         if (userData.id) {
-          const { data: adminData, error } = await supabase
+          // Fetch complete user data from database
+          const { data: userDataFromDB, error } = await supabase
             .from('users')
-            .select('*')
-            .eq('id', userData.id)
+            .select(`
+              user_id,
+              username,
+              full_name,
+              email,
+              admins!inner(admin_id, position, college_department)
+            `)
+            .eq('user_id', userData.id)
             .single();
             
-          if (!error && adminData) {
-            setAdminUser(adminData);
+          if (!error && userDataFromDB) {
+            setAdminUser({
+              ...userDataFromDB,
+              adminData: userDataFromDB.admins[0]
+            });
           } else {
             setAdminUser(userData);
           }
@@ -87,7 +94,6 @@ const SideNav = ({ isOpen, onClose }) => {
         }
       }
 
-      // Fetch statistics from database
       await fetchStatistics();
       
     } catch (error) {
@@ -101,46 +107,32 @@ const SideNav = ({ isOpen, onClose }) => {
     try {
       // Fetch total theses count
       const { count: totalTheses, error: thesesError } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('*', { count: 'exact', head: true });
 
       if (thesesError) throw thesesError;
 
-      // Fetch currently borrowed count (approved but not returned)
-      const { count: currentlyBorrowed, error: borrowError } = await supabase
-        .from('borrowing_requests')
+      // Fetch current access count (approved but not removed)
+      const { count: currentlyBorrowed, error: accessError } = await supabase
+        .from('thesis_access_requests')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'approved');
 
-      if (borrowError) throw borrowError;
+      if (accessError) throw accessError;
 
       // Fetch pending requests count
       const { count: pendingRequests, error: pendingError } = await supabase
-        .from('borrowing_requests')
+        .from('thesis_access_requests')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
 
       if (pendingError) throw pendingError;
 
-      // Fetch overdue theses (approved requests past their due date)
-      const { data: borrowedData, error: overdueError } = await supabase
-        .from('borrowing_requests')
-        .select('*')
-        .eq('status', 'approved');
-
-      if (overdueError) throw overdueError;
-
-      const overdueTheses = borrowedData.filter(request => {
-        const dueDate = new Date(request.approved_date);
-        dueDate.setDate(dueDate.getDate() + request.duration_days);
-        return new Date() > dueDate;
-      }).length;
-
       setStats({
         totalTheses: totalTheses || 0,
         currentlyBorrowed: currentlyBorrowed || 0,
         pendingRequests: pendingRequests || 0,
-        overdueTheses: overdueTheses || 0
+        overdueTheses: 0 // You can implement this based on remove_access_date
       });
 
     } catch (error) {
@@ -149,50 +141,44 @@ const SideNav = ({ isOpen, onClose }) => {
   };
 
   const isActive = (path) => {
-    if (path === '/admin') {
-      return location.pathname === '/admin';
-    }
     return location.pathname.startsWith(path);
   };
 
-  // Refresh stats when sidebar opens
   useEffect(() => {
     if (isOpen) {
       fetchStatistics();
     }
   }, [isOpen]);
 
-  // Function to get display name
   const getDisplayName = () => {
     if (!adminUser) return 'Loading...';
     
-    // Return full name if available
     if (adminUser.full_name) return adminUser.full_name;
-    
-    // Return username if available
+    if (adminUser.fullName) return adminUser.fullName;
     if (adminUser.username) return adminUser.username;
-    
-    // Return email if available
     if (adminUser.email) return adminUser.email;
     
-    // Fallback to first part of email before @
-    if (adminUser.email) {
-      return adminUser.email.split('@')[0];
-    }
-    
-    // Final fallback
     return 'Admin User';
   };
 
-  // Function to get role display
   const getRoleDisplay = () => {
     if (!adminUser) return 'Loading...';
     
-    if (adminUser.role === 'admin') {
-      return adminUser.position ? adminUser.position : 'System Administrator';
+    if (adminUser.adminData) {
+      return adminUser.adminData.position || 'Administrator';
     }
     
-    return adminUser.role ? adminUser.role.charAt(0).toUpperCase() + adminUser.role.slice(1) : 'User';
+    return adminUser.position || 'System Administrator';
+  };
+
+  const getDepartment = () => {
+    if (!adminUser) return '';
+    
+    if (adminUser.adminData) {
+      return adminUser.adminData.college_department;
+    }
+    
+    return adminUser.department || '';
   };
 
   return (
@@ -215,8 +201,8 @@ const SideNav = ({ isOpen, onClose }) => {
           <div className="flex items-center space-x-3">
             <img src={logo} alt="CNSC Logo" className="w-10 h-10" />
             <div>
-              <span className="font-bold text-lg block">Admin Panel</span>
-              <span className="text-xs text-red-200">Thesis Hub</span>
+              <span className="font-bold text-lg block">THESIS GUARD</span>
+              <span className="text-xs text-red-200">Admin Panel</span>
             </div>
           </div>
           <button 
@@ -240,6 +226,11 @@ const SideNav = ({ isOpen, onClose }) => {
               <p className="text-xs text-red-200 truncate">
                 {getRoleDisplay()}
               </p>
+              {getDepartment() && (
+                <p className="text-xs text-red-300 truncate mt-1">
+                  {getDepartment()}
+                </p>
+              )}
               {adminUser?.email && (
                 <p className="text-xs text-red-300 truncate mt-1">
                   {adminUser.email}
@@ -250,15 +241,16 @@ const SideNav = ({ isOpen, onClose }) => {
         </div>
 
         {/* Navigation Items */}
-        <nav className="p-4 space-y-2">
+        <nav className="p-4 space-y-2 flex-1 overflow-y-auto">
           {navItems.map((item) => {
             const IconComponent = item.icon;
             const active = isActive(item.path);
+            
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center space-x-3 p-3 rounded-lg transition-all duration-200 group ${
+                className={`flex items-center space-x-3 p-3 rounded-lg transition-all duration-200 group relative ${
                   active 
                     ? 'bg-red-900 border-l-4 border-yellow-400 shadow-lg' 
                     : 'hover:bg-red-700 hover:border-l-4 hover:border-yellow-400 hover:shadow-md'
@@ -281,7 +273,7 @@ const SideNav = ({ isOpen, onClose }) => {
         </nav>
 
         {/* Quick Stats */}
-        <div className="p-4 border-t border-red-800 mt-4">
+        <div className="p-4 border-t border-red-800">
           <h3 className="text-sm font-semibold text-red-200 mb-3 flex items-center gap-2">
             <BookOpen size={16} />
             System Overview
@@ -307,11 +299,11 @@ const SideNav = ({ isOpen, onClose }) => {
                 <span className="font-semibold text-white">{stats.totalTheses}</span>
               </div>
 
-              {/* Currently Borrowed */}
+              {/* Current Access */}
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                  <span className="text-red-200 text-sm">Borrowed Now:</span>
+                  <span className="text-red-200 text-sm">Current Access:</span>
                 </div>
                 <span className="font-semibold text-white">{stats.currentlyBorrowed}</span>
               </div>
@@ -332,7 +324,7 @@ const SideNav = ({ isOpen, onClose }) => {
         </div>
 
         {/* Alerts Section */}
-        {!loading && (stats.pendingRequests > 0 || stats.overdueTheses > 0) && (
+        {!loading && stats.pendingRequests > 0 && (
           <div className="p-4 border-t border-red-800">
             <h3 className="text-sm font-semibold text-red-200 mb-2 flex items-center gap-2">
               <AlertCircle size={16} />
@@ -342,13 +334,7 @@ const SideNav = ({ isOpen, onClose }) => {
               {stats.pendingRequests > 0 && (
                 <div className="flex items-center gap-2 text-yellow-300">
                   <Clock size={12} />
-                  <span>{stats.pendingRequests} pending request(s) need review</span>
-                </div>
-              )}
-              {stats.overdueTheses > 0 && (
-                <div className="flex items-center gap-2 text-red-300">
-                  <AlertCircle size={12} />
-                  <span>{stats.overdueTheses} thesis(es) overdue for return</span>
+                  <span>{stats.pendingRequests} access request(s) need review</span>
                 </div>
               )}
             </div>

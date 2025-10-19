@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, BookOpen, Save, Shield, Bell, Eye, EyeOff, User as UserIcon } from 'lucide-react';
+import { User, Mail, Phone, BookOpen, Save, Shield, Bell, Eye, EyeOff, User as UserIcon, Trash2 } from 'lucide-react';
 import bg from "../assets/bg-gradient.png";
 import CommonHeader from '../components/CommonHeader';
 import UserSideNav from '../components/UserSideNav';
@@ -10,15 +10,17 @@ const UserAccountSettings = () => {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
+  const [isStudent, setIsStudent] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
     full_name: '',
     email: '',
     phone: '',
+    birthdate: '',
     student_id: '',
-    college: '',
-    course: '',
-    year_level: ''
+    year_level: '',
+    college_department: '',
+    course: ''
   });
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -41,54 +43,80 @@ const UserAccountSettings = () => {
   const [passwordSaved, setPasswordSaved] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState(true);
   const [checkingUsername, setCheckingUsername] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchUserData();
   }, []);
 
-  // Check authentication using your preferred method
   const checkAuthentication = () => {
-    // Method 1: Check localStorage (most common)
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
       const userData = JSON.parse(storedUser);
-      if (userData && userData.role === 'user') {
+      if (userData && (userData.role === 'user' || userData.role === 'student')) {
         return userData;
       }
     }
-
-    // Method 2: Check sessionStorage
-    const sessionUser = sessionStorage.getItem('user');
-    if (sessionUser) {
-      const userData = JSON.parse(sessionUser);
-      if (userData && userData.role === 'user') {
-        return userData;
-      }
-    }
-
-    // Method 3: Check if using Supabase Auth
-    // This would require you to be using Supabase Authentication
-    
     return null;
+  };
+
+  const getDepartmentNameById = async (departmentId) => {
+    if (!departmentId) return '';
+    try {
+      const { data, error } = await supabase
+        .from('college_departments')
+        .select('department_name')
+        .eq('department_id', departmentId)
+        .single();
+
+      if (error) {
+        console.error('Error fetching department name:', error);
+        return '';
+      }
+
+      return data.department_name || '';
+    } catch (err) {
+      console.error('Error fetching department name:', err);
+      return '';
+    }
+  };
+
+  const getCourseNameById = async (courseId) => {
+    if (!courseId) return '';
+    try {
+      const { data, error } = await supabase
+        .from('courses')
+        .select('course_name')
+        .eq('course_id', courseId)
+        .single();
+
+      if (error) {
+        console.error('Error fetching course name:', error);
+        return '';
+      }
+
+      return data.course_name || '';
+    } catch (err) {
+      console.error('Error fetching course name:', err);
+      return '';
+    }
   };
 
   const fetchUserData = async () => {
     try {
       setLoading(true);
       
-      // First, check if user is authenticated using your method
       const authenticatedUser = checkAuthentication();
       
       if (!authenticatedUser) {
-        console.log('No authenticated user found, redirecting to home');
         navigate('/');
         return;
       }
 
-      // If you're using Supabase Auth, get the current user
       let userId = authenticatedUser.id;
       
-      // If using localStorage/sessionStorage without Supabase Auth, use the stored ID
       if (!userId && authenticatedUser.userId) {
         userId = authenticatedUser.userId;
       }
@@ -99,13 +127,11 @@ const UserAccountSettings = () => {
         return;
       }
 
-      console.log('Fetching user data for ID:', userId);
-
       // Fetch user data from users table
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
-        .eq('id', userId)
+        .eq('user_id', userId)
         .single();
 
       if (userError) {
@@ -119,21 +145,89 @@ const UserAccountSettings = () => {
         return;
       }
 
-      console.log('User data fetched:', userData);
-
       setUser(userData);
       
-      // Populate form data
-      setFormData({
-        username: userData.username || '',
-        full_name: userData.full_name || '',
-        email: userData.email || '',
-        phone: userData.phone || '',
-        student_id: userData.student_id || '',
-        college: userData.college || '',
-        course: userData.course || '',
-        year_level: userData.year_level || ''
-      });
+      // Check if user is a student by checking if they have a student_id in students table
+      try {
+        const { data: studentData, error: studentError } = await supabase
+          .from('students')
+          .select('student_id, year_level, college_department, course')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (studentError) {
+          console.error('Error checking student status:', studentError);
+          // If there's an error, assume user is not a student
+          setIsStudent(false);
+          setFormData({
+            username: userData.username || '',
+            full_name: userData.full_name || '',
+            email: userData.email || '',
+            phone: userData.phone || '',
+            birthdate: userData.birthdate || '',
+            student_id: '',
+            year_level: '',
+            college_department: '',
+            course: ''
+          });
+        } else if (studentData && studentData.student_id) {
+          // User has a student_id, so they are a student
+          setIsStudent(true);
+          
+          let departmentName = studentData.college_department;
+          let courseName = studentData.course;
+
+          // Check if college_department is a numeric ID and fetch the department name
+          if (studentData.college_department && !isNaN(studentData.college_department)) {
+            departmentName = await getDepartmentNameById(parseInt(studentData.college_department));
+          }
+
+          // Check if course is a numeric ID and fetch the course name
+          if (studentData.course && !isNaN(studentData.course)) {
+            courseName = await getCourseNameById(parseInt(studentData.course));
+          }
+
+          setFormData({
+            username: userData.username || '',
+            full_name: userData.full_name || '',
+            email: userData.email || '',
+            phone: userData.phone || '',
+            birthdate: userData.birthdate || '',
+            student_id: studentData.student_id || '',
+            year_level: studentData.year_level || '',
+            college_department: departmentName || studentData.college_department || '',
+            course: courseName || studentData.course || ''
+          });
+        } else {
+          // No student record found
+          setIsStudent(false);
+          setFormData({
+            username: userData.username || '',
+            full_name: userData.full_name || '',
+            email: userData.email || '',
+            phone: userData.phone || '',
+            birthdate: userData.birthdate || '',
+            student_id: '',
+            year_level: '',
+            college_department: '',
+            course: ''
+          });
+        }
+      } catch (studentErr) {
+        console.error('Exception when checking student status:', studentErr);
+        setIsStudent(false);
+        setFormData({
+          username: userData.username || '',
+          full_name: userData.full_name || '',
+          email: userData.email || '',
+          phone: userData.phone || '',
+          birthdate: userData.birthdate || '',
+          student_id: '',
+          year_level: '',
+          college_department: '',
+          course: ''
+        });
+      }
 
       // Load preferences
       const savedPreferences = localStorage.getItem(`user_preferences_${userId}`);
@@ -144,14 +238,11 @@ const UserAccountSettings = () => {
     } catch (error) {
       console.error('Error fetching user data:', error);
       setError('Failed to load user data');
-      // Don't redirect immediately, show error first
-      // navigate('/');
     } finally {
       setLoading(false);
     }
   };
 
-  // Check if username is available
   const checkUsernameAvailability = async (username) => {
     if (!username || username === user?.username) {
       setUsernameAvailable(true);
@@ -164,12 +255,11 @@ const UserAccountSettings = () => {
         .from('users')
         .select('username')
         .eq('username', username)
-        .neq('id', user?.id) // Exclude current user
+        .neq('user_id', user?.user_id)
         .single();
 
-      setUsernameAvailable(!data); // If no data, username is available
+      setUsernameAvailable(!data);
     } catch (error) {
-      // If no user found, it's available
       setUsernameAvailable(true);
     } finally {
       setCheckingUsername(false);
@@ -185,7 +275,6 @@ const UserAccountSettings = () => {
   };
 
   const handleLogOut = () => {
-    // Clear all authentication methods
     localStorage.removeItem('user');
     sessionStorage.removeItem('user');
     navigate('/');
@@ -198,7 +287,6 @@ const UserAccountSettings = () => {
       [name]: value
     });
 
-    // Check username availability when username changes
     if (name === 'username') {
       checkUsernameAvailability(value);
     }
@@ -223,7 +311,6 @@ const UserAccountSettings = () => {
     setSaving(true);
     setError('');
 
-    // Validate username
     if (!formData.username.trim()) {
       setError('Username is required');
       setSaving(false);
@@ -243,6 +330,7 @@ const UserAccountSettings = () => {
         return;
       }
 
+      // Update users table (only personal information)
       const { data, error: updateError } = await supabase
         .from('users')
         .update({
@@ -250,17 +338,28 @@ const UserAccountSettings = () => {
           full_name: formData.full_name,
           email: formData.email,
           phone: formData.phone,
-          college: formData.college,
-          course: formData.course,
-          year_level: formData.year_level,
+          birthdate: formData.birthdate,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', user.id)
+        .eq('user_id', user.user_id)
         .select();
 
       if (updateError) throw updateError;
 
+      // Note: Student academic information is no longer updated here
+      // as it's managed by the institution and not editable by students
+
       // Save preferences to localStorage
-      localStorage.setItem(`user_preferences_${user.id}`, JSON.stringify(preferences));
+      localStorage.setItem(`user_preferences_${user.user_id}`, JSON.stringify(preferences));
+
+      // Update localStorage user data
+      const storedUser = JSON.parse(localStorage.getItem('user'));
+      if (storedUser) {
+        storedUser.username = formData.username;
+        storedUser.fullName = formData.full_name;
+        // Note: Student academic info is not updated in localStorage since it's read-only
+        localStorage.setItem('user', JSON.stringify(storedUser));
+      }
 
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -298,8 +397,9 @@ const UserAccountSettings = () => {
         .from('users')
         .update({
           password: passwordData.newPassword,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', user.id);
+        .eq('user_id', user.user_id);
 
       if (dbError) throw dbError;
 
@@ -319,18 +419,58 @@ const UserAccountSettings = () => {
     }
   };
 
-  const colleges = [
-    'College of Arts and Sciences',
-    'College of Business and Public Administration',
-    'College of Education',
-    'College of Engineering',
-    'College of Information and Communications Technology'
-  ];
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'DELETE MY ACCOUNT') {
+      setError('Please type "DELETE MY ACCOUNT" to confirm');
+      return;
+    }
 
-  const yearLevels = ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'];
+    setDeleting(true);
+    setError('');
 
-  // Debug: Check what's happening
-  console.log('Current state:', { loading, user, authenticated: checkAuthentication() });
+    try {
+      if (!user) {
+        setError('No user data found.');
+        return;
+      }
+
+      // First, check if user is a student and delete from students table
+      if (isStudent) {
+        const { error: studentError } = await supabase
+          .from('students')
+          .delete()
+          .eq('user_id', user.user_id);
+
+        if (studentError) {
+          console.error('Error deleting student record:', studentError);
+          // Continue with user deletion even if student record deletion fails
+        }
+      }
+
+      // Delete the user from users table (this will cascade to other tables due to ON DELETE CASCADE)
+      const { error: userError } = await supabase
+        .from('users')
+        .delete()
+        .eq('user_id', user.user_id);
+
+      if (userError) throw userError;
+
+      // Clear local storage and redirect to home
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('user');
+      localStorage.removeItem(`user_preferences_${user.user_id}`);
+      
+      navigate('/');
+      
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      setError('Failed to delete account. Please try again or contact support.');
+    } finally {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+      setDeleteConfirmText('');
+    }
+  };
 
   if (loading) {
     return (
@@ -380,6 +520,13 @@ const UserAccountSettings = () => {
             <div className="mb-8">
               <h1 className="text-4xl font-bold text-white mb-2">Account Settings</h1>
               <p className="text-white/80">Manage your personal information and preferences</p>
+              {isStudent && (
+                <div className="mt-2 bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3 inline-block">
+                  <span className="text-yellow-200 text-sm font-semibold">
+                    🎓 Student Account
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-8 shadow-lg">
@@ -486,82 +633,109 @@ const UserAccountSettings = () => {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Student ID *
+                        Birthdate
                       </label>
                       <input
-                        type="text"
-                        name="student_id"
-                        value={formData.student_id}
-                        onChange={handleInputChange}
-                        className="w-full p-3 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent bg-gray-100"
-                        required
-                        disabled
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Student ID cannot be changed</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Rest of your form remains the same... */}
-                {/* Academic Information */}
-                <div>
-                  <h2 className="text-xl font-bold text-[#990000] mb-4 flex items-center gap-2">
-                    <BookOpen size={20} />
-                    Academic Information
-                  </h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        College *
-                      </label>
-                      <select
-                        name="college"
-                        value={formData.college}
+                        type="date"
+                        name="birthdate"
+                        value={formData.birthdate}
                         onChange={handleInputChange}
                         className="w-full p-3 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                        required
-                      >
-                        <option value="">Select College</option>
-                        {colleges.map(college => (
-                          <option key={college} value={college}>{college}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Course/Program *
-                      </label>
-                      <input
-                        type="text"
-                        name="course"
-                        value={formData.course}
-                        onChange={handleInputChange}
-                        className="w-full p-3 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                        placeholder="e.g., Bachelor of Science in Information Technology"
-                        required
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Year Level *
-                      </label>
-                      <select
-                        name="year_level"
-                        value={formData.year_level}
-                        onChange={handleInputChange}
-                        className="w-full p-3 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                        required
-                      >
-                        <option value="">Select Year Level</option>
-                        {yearLevels.map(level => (
-                          <option key={level} value={level}>{level}</option>
-                        ))}
-                      </select>
-                    </div>
+                    {isStudent && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Student ID *
+                        </label>
+                        <input
+                          type="text"
+                          name="student_id"
+                          value={formData.student_id}
+                          className="w-full p-3 border border-gray-300 rounded-lg text-base bg-gray-100 cursor-not-allowed"
+                          disabled
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Student ID cannot be changed</p>
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Academic Information - Only for Students */}
+                {isStudent && (
+                  <div>
+                    <h2 className="text-xl font-bold text-[#990000] mb-4 flex items-center gap-2">
+                      <BookOpen size={20} />
+                      Academic Information
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Student ID *
+                        </label>
+                        <input
+                          type="text"
+                          name="student_id"
+                          value={formData.student_id}
+                          className="w-full p-3 border border-gray-300 rounded-lg text-base bg-gray-100 cursor-not-allowed"
+                          disabled
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Student ID cannot be changed</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Year Level *
+                        </label>
+                        <input
+                          type="text"
+                          name="year_level"
+                          value={formData.year_level}
+                          className="w-full p-3 border border-gray-300 rounded-lg text-base bg-gray-100 cursor-not-allowed"
+                          disabled
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Year level cannot be changed</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          College Department *
+                        </label>
+                        <input
+                          type="text"
+                          name="college_department"
+                          value={formData.college_department}
+                          className="w-full p-3 border border-gray-300 rounded-lg text-base bg-gray-100 cursor-not-allowed"
+                          disabled
+                        />
+                        <p className="text-xs text-gray-500 mt-1">College department cannot be changed</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Course/Program *
+                        </label>
+                        <input
+                          type="text"
+                          name="course"
+                          value={formData.course}
+                          className="w-full p-3 border border-gray-300 rounded-lg text-base bg-gray-100 cursor-not-allowed"
+                          disabled
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Course cannot be changed</p>
+                      </div>
+                    </div>
+                    
+                    {/* Information message */}
+                    <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <p className="text-blue-700 text-sm">
+                        <strong>Note:</strong> Academic information is managed by your institution. 
+                        Please contact your department administrator if you need to update any academic details.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Preferences */}
                 <div>
@@ -711,12 +885,84 @@ const UserAccountSettings = () => {
 
                     <div className="text-sm text-gray-600">
                       <p>Account created: {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</p>
+                      <p>Account type: {isStudent ? 'Student' : 'Regular User'}</p>
                     </div>
                   </div>
                 </div>
 
+                {/* Delete Account Section */}
+                <div className="pt-6 mt-6 border-t border-gray-200">
+                  <h3 className="text-lg font-bold text-red-600 mb-4">Delete Account</h3>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+                    <p className="text-red-700 mb-4">
+                      <strong>Warning:</strong> This action is permanent and cannot be undone. 
+                      All your data, including access requests and history, will be permanently deleted.
+                    </p>
+                    
+                    {!showDeleteConfirm ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2"
+                      >
+                        <Trash2 size={20} />
+                        Delete My Account
+                      </button>
+                    ) : (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-red-700 mb-2">
+                            Type "DELETE MY ACCOUNT" to confirm
+                          </label>
+                          <input
+                            type="text"
+                            value={deleteConfirmText}
+                            onChange={(e) => setDeleteConfirmText(e.target.value)}
+                            className="w-full p-3 border border-red-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                            placeholder="DELETE MY ACCOUNT"
+                          />
+                        </div>
+                        
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={handleDeleteAccount}
+                            disabled={deleting || deleteConfirmText !== 'DELETE MY ACCOUNT'}
+                            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-6 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2"
+                          >
+                            {deleting ? (
+                              <>
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                Deleting...
+                              </>
+                            ) : (
+                              <>
+                                <Trash2 size={20} />
+                                Permanently Delete Account
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowDeleteConfirm(false);
+                              setDeleteConfirmText('');
+                            }}
+                            className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-semibold transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Save Button */}
-                <div className="flex justify-end pt-6">
+                <div className="flex justify-between items-center pt-6">
+                  <div className="text-sm text-gray-500">
+                    Last updated: {user?.updated_at ? new Date(user.updated_at).toLocaleDateString() : 'N/A'}
+                  </div>
                   <button
                     type="submit"
                     disabled={saving || !usernameAvailable || checkingUsername}

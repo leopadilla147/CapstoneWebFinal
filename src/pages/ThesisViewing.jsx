@@ -7,7 +7,7 @@ import {
   X, ChevronLeft, ChevronRight, RefreshCw
 } from 'lucide-react';
 import bg from "../assets/bg-gradient.png";
-import Header from '../components/Header';
+import CommonHeader from '../components/CommonHeader';
 import SideNav from '../components/SideNav';
 import { supabase } from '../connect-supabase';
 
@@ -24,7 +24,6 @@ const ThesisViewing = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [collegeFilter, setCollegeFilter] = useState('all');
   const [batchFilter, setBatchFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -53,13 +52,13 @@ const ThesisViewing = () => {
 
   useEffect(() => {
     filterTheses();
-  }, [searchTerm, collegeFilter, batchFilter, statusFilter, theses]);
+  }, [searchTerm, collegeFilter, batchFilter, theses]);
 
   const fetchTheses = async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('*')
         .order('created_at', { ascending: false });
 
@@ -89,7 +88,7 @@ const ThesisViewing = () => {
 
     // Apply college filter
     if (collegeFilter !== 'all') {
-      filtered = filtered.filter(thesis => thesis.college === collegeFilter);
+      filtered = filtered.filter(thesis => thesis.college_department === collegeFilter);
     }
 
     // Apply batch filter
@@ -97,23 +96,14 @@ const ThesisViewing = () => {
       filtered = filtered.filter(thesis => thesis.batch === batchFilter);
     }
 
-    // Apply status filter (you might want to add a status field to your table)
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(thesis => {
-        // This is a placeholder - you might want to add a status field
-        return true;
-      });
-    }
-
     setFilteredTheses(filtered);
-    setCurrentPage(1); // Reset to first page when filters change
+    setCurrentPage(1);
   };
 
   const clearFilters = () => {
     setSearchTerm('');
     setCollegeFilter('all');
     setBatchFilter('all');
-    setStatusFilter('all');
   };
 
   // Pagination
@@ -128,7 +118,7 @@ const ThesisViewing = () => {
       title: thesis.title || '',
       author: thesis.author || '',
       abstract: thesis.abstract || '',
-      college: thesis.college || '',
+      college_department: thesis.college_department || '',
       batch: thesis.batch || ''
     });
     setShowEditModal(true);
@@ -144,19 +134,18 @@ const ThesisViewing = () => {
 
     try {
       const { error } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .delete()
-        .eq('thesisID', selectedThesis.thesisID);
+        .eq('thesis_id', selectedThesis.thesis_id);
 
       if (error) throw error;
 
       // Remove from local state
-      setTheses(prev => prev.filter(t => t.thesisID !== selectedThesis.thesisID));
+      setTheses(prev => prev.filter(t => t.thesis_id !== selectedThesis.thesis_id));
       setSuccess('Thesis deleted successfully!');
       setShowDeleteModal(false);
       setSelectedThesis(null);
 
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       console.error('Error deleting thesis:', err);
@@ -170,16 +159,19 @@ const ThesisViewing = () => {
 
     try {
       const { error } = await supabase
-        .from('thesestwo')
-        .update(editFormData)
-        .eq('thesisID', selectedThesis.thesisID);
+        .from('theses')
+        .update({
+          ...editFormData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('thesis_id', selectedThesis.thesis_id);
 
       if (error) throw error;
 
       // Update local state
       setTheses(prev => prev.map(t => 
-        t.thesisID === selectedThesis.thesisID 
-          ? { ...t, ...editFormData }
+        t.thesis_id === selectedThesis.thesis_id 
+          ? { ...t, ...editFormData, updated_at: new Date().toISOString() }
           : t
       ));
 
@@ -222,12 +214,12 @@ const ThesisViewing = () => {
     return text.substring(0, maxLength) + '...';
   };
 
-  const hasActiveFilters = searchTerm || collegeFilter !== 'all' || batchFilter !== 'all' || statusFilter !== 'all';
+  const hasActiveFilters = searchTerm || collegeFilter !== 'all' || batchFilter !== 'all';
 
   return (
     <div className="min-h-screen w-screen bg-cover bg-center bg-no-repeat flex flex-col font-sans" style={{ backgroundImage: `url(${bg})` }}>
       
-      <Header onMenuToggle={toggleSidebar} onLogOut={handleLogOut} />
+      <CommonHeader isAuthenticated={true} onLogOut={handleLogOut} userRole="admin" />
 
       <div className="flex-1 flex">
         <SideNav isOpen={isSidebarOpen} onClose={closeSidebar} />
@@ -236,7 +228,7 @@ const ThesisViewing = () => {
           <div className="max-w-7xl mx-auto">
             {/* Header */}
             <div className="mb-8">
-              <h1 className="text-4xl font-bold text-white mb-2">Thesis Management</h1>
+              <h1 className="text-4xl font-bold text-white mb-2">THESIS GUARD</h1>
               <p className="text-white/80 text-lg">
                 View, edit, and manage all theses in the system
               </p>
@@ -300,7 +292,7 @@ const ThesisViewing = () => {
               </div>
 
               {/* Filters */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                 {/* College Filter */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -353,19 +345,6 @@ const ThesisViewing = () => {
                     <option value="50">50</option>
                   </select>
                 </div>
-
-                {/* Clear Filters */}
-                <div className="flex items-end">
-                  {hasActiveFilters && (
-                    <button
-                      onClick={clearFilters}
-                      className="text-red-600 hover:text-red-700 font-semibold flex items-center gap-2"
-                    >
-                      <X size={16} />
-                      Clear Filters
-                    </button>
-                  )}
-                </div>
               </div>
 
               {/* Active Filters Display */}
@@ -395,6 +374,13 @@ const ThesisViewing = () => {
                       </button>
                     </span>
                   )}
+                  <button
+                    onClick={clearFilters}
+                    className="text-red-600 hover:text-red-700 font-semibold flex items-center gap-2 ml-2"
+                  >
+                    <X size={16} />
+                    Clear All Filters
+                  </button>
                 </div>
               )}
             </div>
@@ -479,7 +465,7 @@ const ThesisViewing = () => {
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {currentTheses.map((thesis) => (
-                        <tr key={thesis.thesisID} className="hover:bg-gray-50 transition-colors">
+                        <tr key={thesis.thesis_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-6 py-4">
                             <div className="flex items-start space-x-4">
                               {thesis.qr_code_url && (
@@ -500,16 +486,26 @@ const ThesisViewing = () => {
                                 <p className="text-sm text-gray-500 line-clamp-2">
                                   {truncateText(thesis.abstract, 120)}
                                 </p>
-                                {thesis.file_url && (
-                                  <a
-                                    href={thesis.file_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm mt-2"
-                                  >
-                                    <FileText size={14} />
-                                    View PDF
-                                  </a>
+                                {thesis.pdf_file_url && (
+                                  <div className="flex gap-2 mt-2">
+                                    <a
+                                      href={thesis.pdf_file_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm"
+                                    >
+                                      <Eye size={14} />
+                                      View PDF
+                                    </a>
+                                    <a
+                                      href={thesis.pdf_file_url}
+                                      download
+                                      className="inline-flex items-center gap-1 text-green-600 hover:text-green-700 text-sm"
+                                    >
+                                      <Download size={14} />
+                                      Download
+                                    </a>
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -518,7 +514,7 @@ const ThesisViewing = () => {
                             <div className="space-y-2">
                               <div className="flex items-center gap-1 text-sm text-gray-700">
                                 <Building size={14} />
-                                {thesis.college}
+                                {thesis.college_department}
                               </div>
                               <div className="flex items-center gap-1 text-sm text-gray-700">
                                 <Calendar size={14} />
@@ -544,13 +540,6 @@ const ThesisViewing = () => {
                                 title="Delete Thesis"
                               >
                                 <Trash2 size={16} />
-                              </button>
-                              <button
-                                onClick={() => {/* View details */}}
-                                className="text-green-600 hover:text-green-700 p-2 rounded-lg hover:bg-green-50 transition-colors"
-                                title="View Details"
-                              >
-                                <Eye size={16} />
                               </button>
                             </div>
                           </td>
@@ -673,8 +662,8 @@ const ThesisViewing = () => {
                     College *
                   </label>
                   <select
-                    value={editFormData.college}
-                    onChange={(e) => setEditFormData(prev => ({ ...prev, college: e.target.value }))}
+                    value={editFormData.college_department}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, college_department: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
                     required
                   >
@@ -689,17 +678,13 @@ const ThesisViewing = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Batch *
                   </label>
-                  <select
+                  <input
+                    type="text"
                     value={editFormData.batch}
                     onChange={(e) => setEditFormData(prev => ({ ...prev, batch: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-red-500 focus:border-transparent"
                     required
-                  >
-                    <option value="">Select Batch</option>
-                    {batches.map(batch => (
-                      <option key={batch} value={batch}>{batch}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
               </div>
 

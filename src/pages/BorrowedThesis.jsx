@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Download, Filter, Check, X, Clock, History } from 'lucide-react';
+import { Search, Download, Filter, Check, X, Clock, History, User, Book, Calendar } from 'lucide-react';
 import bg from "../assets/bg-gradient.png"
 import { useNavigate } from "react-router-dom";
-import Header from '../components/Header';
+import CommonHeader from '../components/CommonHeader.jsx';
 import SideNav from '../components/SideNav';
 import { supabase } from '../connect-supabase.js';
 
@@ -10,15 +10,15 @@ function BorrowedThesis() {
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('requests');
-  const [borrowingData, setBorrowingData] = useState({
+  const [accessData, setAccessData] = useState({
     requests: [],
     current: [],
     history: []
   });
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    currentBorrows: 0,
-    returnedThisMonth: 0,
+    currentAccess: 0,
+    approvedThisMonth: 0,
     requestsThisMonth: 0
   });
 
@@ -34,38 +34,37 @@ function BorrowedThesis() {
     navigate('/')
   }
 
-  // Fetch borrowing data
-  const fetchBorrowingData = async () => {
+  // Fetch access request data
+  const fetchAccessData = async () => {
     try {
       setLoading(true);
       
-      // Fetch all borrowing requests with user and thesis data
+      // Fetch all access requests with user and thesis data
       const { data, error } = await supabase
-        .from('borrowing_requests')
+        .from('thesis_access_requests')
         .select(`
           *,
-          users:user_id (full_name, student_id, college, course, year_level),
-          thesestwo:thesis_id (title, author, college, file_url)
+          users:user_id (user_id, username, full_name, email),
+          theses:thesis_id (thesis_id, title, author, college_department, pdf_file_url)
         `)
-        .order('created_at', { ascending: false });
+        .order('request_date', { ascending: false });
 
       if (error) throw error;
 
       // Categorize data
       const requests = data.filter(item => item.status === 'pending');
       const current = data.filter(item => item.status === 'approved');
-      const history = data.filter(item => ['returned', 'rejected'].includes(item.status));
+      const history = data.filter(item => ['removed', 'rejected'].includes(item.status));
 
-      setBorrowingData({ requests, current, history });
+      setAccessData({ requests, current, history });
 
       // Calculate statistics
       const currentMonth = new Date().getMonth();
       const currentYear = new Date().getFullYear();
 
-      const returnedThisMonth = history.filter(item => 
-        item.status === 'returned' && 
-        new Date(item.return_date).getMonth() === currentMonth &&
-        new Date(item.return_date).getFullYear() === currentYear
+      const approvedThisMonth = current.filter(item => 
+        new Date(item.approved_date).getMonth() === currentMonth &&
+        new Date(item.approved_date).getFullYear() === currentYear
       ).length;
 
       const requestsThisMonth = data.filter(item => 
@@ -74,13 +73,13 @@ function BorrowedThesis() {
       ).length;
 
       setStats({
-        currentBorrows: current.length,
-        returnedThisMonth,
+        currentAccess: current.length,
+        approvedThisMonth,
         requestsThisMonth
       });
 
     } catch (error) {
-      console.error('Error fetching borrowing data:', error);
+      console.error('Error fetching access data:', error);
     } finally {
       setLoading(false);
     }
@@ -89,49 +88,82 @@ function BorrowedThesis() {
   // Handle request actions
   const handleRequestAction = async (requestId, action) => {
     try {
+      const request = accessData.requests.find(req => req.access_request_id === requestId);
       const updateData = {
         status: action === 'approve' ? 'approved' : 'rejected',
         approved_date: action === 'approve' ? new Date().toISOString() : null
       };
 
       const { error } = await supabase
-        .from('borrowing_requests')
+        .from('thesis_access_requests')
         .update(updateData)
-        .eq('id', requestId);
+        .eq('access_request_id', requestId);
 
       if (error) throw error;
 
+      // Create notification for user
+      if (request) {
+        await supabase
+          .from('notifications')
+          .insert({
+            user_id: request.user_id,
+            thesis_id: request.thesis_id,
+            access_request_id: requestId,
+            title: action === 'approve' ? 'Access Request Approved' : 'Access Request Rejected',
+            message: action === 'approve' 
+              ? `Your access request for "${request.theses.title}" has been approved`
+              : `Your access request for "${request.theses.title}" has been rejected`,
+            type: action === 'approve' ? 'success' : 'error'
+          });
+      }
+
       // Refresh data
-      fetchBorrowingData();
+      fetchAccessData();
 
     } catch (error) {
       console.error('Error updating request:', error);
     }
   };
 
-  // Handle return action
-  const handleReturn = async (borrowId) => {
+  // Handle remove access action
+  const handleRemoveAccess = async (accessId) => {
     try {
+      const access = accessData.current.find(acc => acc.access_request_id === accessId);
+      
       const { error } = await supabase
-        .from('borrowing_requests')
+        .from('thesis_access_requests')
         .update({
-          status: 'returned',
-          return_date: new Date().toISOString()
+          status: 'removed',
+          remove_access_date: new Date().toISOString()
         })
-        .eq('id', borrowId);
+        .eq('access_request_id', accessId);
 
       if (error) throw error;
 
+      // Create notification for user
+      if (access) {
+        await supabase
+          .from('notifications')
+          .insert({
+            user_id: access.user_id,
+            thesis_id: access.thesis_id,
+            access_request_id: accessId,
+            title: 'Access Removed',
+            message: `Your access to "${access.theses.title}" has been removed`,
+            type: 'warning'
+          });
+      }
+
       // Refresh data
-      fetchBorrowingData();
+      fetchAccessData();
 
     } catch (error) {
-      console.error('Error returning thesis:', error);
+      console.error('Error removing access:', error);
     }
   };
 
   useEffect(() => {
-    fetchBorrowingData();
+    fetchAccessData();
   }, []);
 
   const getStatusBadge = (status) => {
@@ -139,7 +171,7 @@ function BorrowedThesis() {
       pending: { color: 'bg-yellow-100 text-yellow-800', label: 'Pending' },
       approved: { color: 'bg-green-100 text-green-800', label: 'Approved' },
       rejected: { color: 'bg-red-100 text-red-800', label: 'Rejected' },
-      returned: { color: 'bg-blue-100 text-blue-800', label: 'Returned' }
+      removed: { color: 'bg-gray-100 text-gray-800', label: 'Removed' }
     };
 
     const config = statusConfig[status] || statusConfig.pending;
@@ -153,7 +185,7 @@ function BorrowedThesis() {
   return (
     <div className="min-h-screen w-screen bg-cover bg-center bg-no-repeat flex flex-col font-sans" style={{ backgroundImage: `url(${bg})` }}>
       
-      <Header onMenuToggle={toggleSidebar} onLogOut={handleLogOut} />
+      <CommonHeader isAuthenticated={true} onLogOut={handleLogOut} userRole="admin" />
 
       <div className="flex-1 flex">
         <SideNav isOpen={isSidebarOpen} onClose={closeSidebar} />
@@ -162,9 +194,9 @@ function BorrowedThesis() {
           <div className="max-w-7xl mx-auto">
             {/* Page Header */}
             <div className="mb-8">
-              <h1 className="text-4xl font-bold text-white mb-2">THESIS HUB</h1>
-              <p className="text-xl font-semibold text-white">Borrowing Management</p>
-              <p className="text-greyy-700 mt-2">Manage thesis borrowing requests and track borrowed theses</p>
+              <h1 className="text-4xl font-bold text-white mb-2">THESIS GUARD</h1>
+              <p className="text-xl font-semibold text-white">Thesis Access Management</p>
+              <p className="text-greyy-700 mt-2">Manage thesis access requests and track user access</p>
             </div>
 
             {/* Statistics */}
@@ -172,29 +204,29 @@ function BorrowedThesis() {
               <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg">
                 <div className="flex items-center gap-4">
                   <div className="bg-blue-100 p-3 rounded-full">
-                    <Clock className="w-6 h-6 text-blue-600" />
+                    <User className="w-6 h-6 text-blue-600" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-gray-800">{stats.currentBorrows}</p>
-                    <p className="text-gray-600">Currently Borrowed</p>
+                    <p className="text-2xl font-bold text-gray-800">{stats.currentAccess}</p>
+                    <p className="text-gray-600">Current Access</p>
                   </div>
                 </div>
               </div>
               <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg">
                 <div className="flex items-center gap-4">
                   <div className="bg-green-100 p-3 rounded-full">
-                    <History className="w-6 h-6 text-green-600" />
+                    <Check className="w-6 h-6 text-green-600" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-gray-800">{stats.returnedThisMonth}</p>
-                    <p className="text-gray-600">Returned This Month</p>
+                    <p className="text-2xl font-bold text-gray-800">{stats.approvedThisMonth}</p>
+                    <p className="text-gray-600">Approved This Month</p>
                   </div>
                 </div>
               </div>
               <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg">
                 <div className="flex items-center gap-4">
                   <div className="bg-purple-100 p-3 rounded-full">
-                    <Filter className="w-6 h-6 text-purple-600" />
+                    <History className="w-6 h-6 text-purple-600" />
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-gray-800">{stats.requestsThisMonth}</p>
@@ -215,7 +247,7 @@ function BorrowedThesis() {
                   }`}
                   onClick={() => setActiveTab('requests')}
                 >
-                  Pending Requests ({borrowingData.requests.length})
+                  Pending Requests ({accessData.requests.length})
                 </button>
                 <button
                   className={`px-4 py-2 font-semibold border-b-2 transition-colors ${
@@ -225,7 +257,7 @@ function BorrowedThesis() {
                   }`}
                   onClick={() => setActiveTab('current')}
                 >
-                  Currently Borrowed ({borrowingData.current.length})
+                  Current Access ({accessData.current.length})
                 </button>
                 <button
                   className={`px-4 py-2 font-semibold border-b-2 transition-colors ${
@@ -235,7 +267,7 @@ function BorrowedThesis() {
                   }`}
                   onClick={() => setActiveTab('history')}
                 >
-                  History ({borrowingData.history.length})
+                  History ({accessData.history.length})
                 </button>
               </div>
             </div>
@@ -248,7 +280,7 @@ function BorrowedThesis() {
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                     <input
                       type="text"
-                      placeholder="Search by student name, ID, or thesis title..."
+                      placeholder="Search by user name, email, or thesis title..."
                       className="w-full pl-10 pr-4 py-3 rounded-l-full border border-gray-300 text-base outline-none"
                     />
                   </div>
@@ -259,14 +291,19 @@ function BorrowedThesis() {
                 </div>
                 
                 <div className="flex gap-3">
+                  {/* Filter button - Show for all tabs */}
                   <button className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-3 rounded-full font-semibold flex items-center gap-2">
                     <Filter size={20} />
                     Filter
                   </button>
-                  <button className="bg-green-700 hover:bg-green-800 text-white px-4 py-3 rounded-full font-semibold flex items-center gap-2">
-                    <Download size={20} />
-                    Export
-                  </button>
+                  
+                  {/* Export button - Only show for History tab */}
+                  {activeTab === 'history' && (
+                    <button className="bg-green-700 hover:bg-green-800 text-white px-4 py-3 rounded-full font-semibold flex items-center gap-2">
+                      <Download size={20} />
+                      Export
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -286,35 +323,35 @@ function BorrowedThesis() {
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-gray-100 font-bold">
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Department</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">ID No.</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Name</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">User</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Email</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Thesis Title</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Request Date</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Duration</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {borrowingData.requests.map((item) => (
-                            <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="border border-gray-300 px-6 py-4 text-base">{item.users?.college || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base font-mono">{item.users?.student_id || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base font-semibold">{item.users?.full_name || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base">{item.thesestwo?.title || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base">{new Date(item.request_date).toLocaleDateString()}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base">{item.duration_days} days</td>
+                          {accessData.requests.map((item) => (
+                            <tr key={item.access_request_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="border border-gray-300 px-6 py-4 text-base font-semibold">
+                                {item.users?.full_name || 'N/A'}
+                              </td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">{item.users?.email || 'N/A'}</td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">{item.theses?.title || 'N/A'}</td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">
+                                {new Date(item.request_date).toLocaleDateString()}
+                              </td>
                               <td className="border border-gray-300 px-6 py-4">
                                 <div className="flex gap-2">
                                   <button 
-                                    onClick={() => handleRequestAction(item.id, 'approve')}
+                                    onClick={() => handleRequestAction(item.access_request_id, 'approve')}
                                     className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm flex items-center gap-1"
                                   >
                                     <Check size={16} />
                                     Approve
                                   </button>
                                   <button 
-                                    onClick={() => handleRequestAction(item.id, 'reject')}
+                                    onClick={() => handleRequestAction(item.access_request_id, 'reject')}
                                     className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm flex items-center gap-1"
                                   >
                                     <X size={16} />
@@ -324,9 +361,9 @@ function BorrowedThesis() {
                               </td>
                             </tr>
                           ))}
-                          {borrowingData.requests.length === 0 && (
+                          {accessData.requests.length === 0 && (
                             <tr>
-                              <td colSpan="7" className="border border-gray-300 px-6 py-8 text-center text-gray-500">
+                              <td colSpan="5" className="border border-gray-300 px-6 py-8 text-center text-gray-500">
                                 No pending requests found
                               </td>
                             </tr>
@@ -336,57 +373,44 @@ function BorrowedThesis() {
                     </div>
                   )}
 
-                  {/* Currently Borrowed Table */}
+                  {/* Current Access Table */}
                   {activeTab === 'current' && (
                     <div className="overflow-x-auto">
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-gray-100 font-bold">
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Department</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">ID No.</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Name</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">User</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Email</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Thesis Title</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Borrow Date</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Due Date</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Approved Date</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {borrowingData.current.map((item) => {
-                            const dueDate = new Date(item.approved_date);
-                            dueDate.setDate(dueDate.getDate() + item.duration_days);
-                            const isOverdue = new Date() > dueDate;
-
-                            return (
-                              <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                                <td className="border border-gray-300 px-6 py-4 text-base">{item.users?.college || 'N/A'}</td>
-                                <td className="border border-gray-300 px-6 py-4 text-base font-mono">{item.users?.student_id || 'N/A'}</td>
-                                <td className="border border-gray-300 px-6 py-4 text-base font-semibold">{item.users?.full_name || 'N/A'}</td>
-                                <td className="border border-gray-300 px-6 py-4 text-base">{item.thesestwo?.title || 'N/A'}</td>
-                                <td className="border border-gray-300 px-6 py-4 text-base">{new Date(item.approved_date).toLocaleDateString()}</td>
-                                <td className="border border-gray-300 px-6 py-4 text-base">
-                                  <span className={`px-2 py-1 rounded text-sm font-semibold ${
-                                    isOverdue ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
-                                  }`}>
-                                    {dueDate.toLocaleDateString()}
-                                    {isOverdue && ' (Overdue)'}
-                                  </span>
-                                </td>
-                                <td className="border border-gray-300 px-6 py-4">
-                                  <button 
-                                    onClick={() => handleReturn(item.id)}
-                                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
-                                  >
-                                    Mark as Returned
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          {borrowingData.current.length === 0 && (
+                          {accessData.current.map((item) => (
+                            <tr key={item.access_request_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="border border-gray-300 px-6 py-4 text-base font-semibold">
+                                {item.users?.full_name || 'N/A'}
+                              </td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">{item.users?.email || 'N/A'}</td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">{item.theses?.title || 'N/A'}</td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">
+                                {new Date(item.approved_date).toLocaleDateString()}
+                              </td>
+                              <td className="border border-gray-300 px-6 py-4">
+                                <button 
+                                  onClick={() => handleRemoveAccess(item.access_request_id)}
+                                  className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
+                                >
+                                  Remove Access
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {accessData.current.length === 0 && (
                             <tr>
-                              <td colSpan="7" className="border border-gray-300 px-6 py-8 text-center text-gray-500">
-                                No currently borrowed theses
+                              <td colSpan="5" className="border border-gray-300 px-6 py-8 text-center text-gray-500">
+                                No current access found
                               </td>
                             </tr>
                           )}
@@ -401,34 +425,36 @@ function BorrowedThesis() {
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-gray-100 font-bold">
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Department</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">ID No.</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Name</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">User</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Email</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Thesis Title</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Request Date</th>
                             <th className="border border-gray-300 px-6 py-4 text-left text-base">Status</th>
-                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Return Date</th>
+                            <th className="border border-gray-300 px-6 py-4 text-left text-base">Removed Date</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {borrowingData.history.map((item) => (
-                            <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                              <td className="border border-gray-300 px-6 py-4 text-base">{item.users?.college || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base font-mono">{item.users?.student_id || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base font-semibold">{item.users?.full_name || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base">{item.thesestwo?.title || 'N/A'}</td>
-                              <td className="border border-gray-300 px-6 py-4 text-base">{new Date(item.request_date).toLocaleDateString()}</td>
+                          {accessData.history.map((item) => (
+                            <tr key={item.access_request_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="border border-gray-300 px-6 py-4 text-base font-semibold">
+                                {item.users?.full_name || 'N/A'}
+                              </td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">{item.users?.email || 'N/A'}</td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">{item.theses?.title || 'N/A'}</td>
+                              <td className="border border-gray-300 px-6 py-4 text-base">
+                                {new Date(item.request_date).toLocaleDateString()}
+                              </td>
                               <td className="border border-gray-300 px-6 py-4 text-base">
                                 {getStatusBadge(item.status)}
                               </td>
                               <td className="border border-gray-300 px-6 py-4 text-base">
-                                {item.return_date ? new Date(item.return_date).toLocaleDateString() : 'N/A'}
+                                {item.remove_access_date ? new Date(item.remove_access_date).toLocaleDateString() : 'N/A'}
                               </td>
                             </tr>
                           ))}
-                          {borrowingData.history.length === 0 && (
+                          {accessData.history.length === 0 && (
                             <tr>
-                              <td colSpan="7" className="border border-gray-300 px-6 py-8 text-center text-gray-500">
+                              <td colSpan="6" className="border border-gray-300 px-6 py-8 text-center text-gray-500">
                                 No history found
                               </td>
                             </tr>

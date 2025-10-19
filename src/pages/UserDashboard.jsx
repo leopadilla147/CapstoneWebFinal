@@ -26,7 +26,6 @@ const UserDashboard = () => {
     try {
       setLoading(true);
       
-      // Check authentication
       const storedUser = localStorage.getItem('user');
       if (!storedUser) {
         navigate('/');
@@ -34,13 +33,12 @@ const UserDashboard = () => {
       }
 
       const userData = JSON.parse(storedUser);
-      if (userData.role !== 'user') {
+      if (userData.role !== 'user' && userData.role !== 'student') {
         navigate('/');
         return;
       }
       setUser(userData);
 
-      // Fetch user's borrowing requests and activities
       await fetchUserActivities(userData.id);
       
     } catch (error) {
@@ -52,24 +50,26 @@ const UserDashboard = () => {
 
   const fetchUserActivities = async (userId) => {
     try {
-      // Fetch borrowing requests with thesis details
-      const { data: borrowingRequests, error } = await supabase
-        .from('borrowing_requests')
+      // CORRECTED: Use 'thesis_access_request' table (singular) instead of 'thesis_access_requests'
+      // CORRECTED: Use 'theses' table instead of 'themes'
+      const { data: accessRequests, error } = await supabase
+        .from('thesis_access_requests')
         .select(`
           *,
-          thesestwo:thesis_id (
+          theses (
+            thesis_id,
             title,
             author,
-            college
+            college_department
           )
         `)
         .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('request_date', { ascending: false });
 
       if (error) throw error;
 
       // Transform data to match the activity format
-      const activities = borrowingRequests.map(request => {
+      const activities = accessRequests.map(request => {
         let status, type, duration;
         
         switch (request.status) {
@@ -77,8 +77,8 @@ const UserDashboard = () => {
             status = 'completed';
             type = 'thesis_access';
             const dueDate = new Date(request.approved_date);
-            dueDate.setDate(dueDate.getDate() + request.duration_days);
-            duration = `Approved for ${request.duration_days} days`;
+            dueDate.setDate(dueDate.getDate() + 7); // Default 7 days
+            duration = `Approved for 7 days`;
             break;
           case 'pending':
             status = 'pending';
@@ -102,9 +102,9 @@ const UserDashboard = () => {
         }
 
         return {
-          id: request.id,
+          id: request.access_request_id,
           type: type,
-          title: request.thesestwo?.title || 'Unknown Thesis',
+          title: request.theses?.title || 'Unknown Thesis',
           status: status,
           date: new Date(request.request_date).toLocaleDateString(),
           time: new Date(request.request_date).toLocaleTimeString('en-US', { 
@@ -112,7 +112,7 @@ const UserDashboard = () => {
             minute: '2-digit' 
           }),
           duration: duration,
-          thesisDetails: request.thesestwo,
+          thesisDetails: request.theses,
           requestData: request
         };
       });
@@ -219,7 +219,7 @@ const UserDashboard = () => {
               <div className="flex justify-between items-center">
                 <div>
                   <h1 className="text-4xl font-bold text-black mb-2">
-                    Welcome back{user?.full_name ? `, ${user.full_name}` : '!'}
+                    Welcome back{user?.fullName ? `, ${user.fullName}` : '!'}
                   </h1>
                   <p className="text-black/80 text-lg">
                     Track your thesis access requests and viewing history
@@ -354,9 +354,9 @@ const UserDashboard = () => {
                             <span className={`px-2 py-1 rounded text-xs font-semibold ${getStatusColor(activity.status)}`}>
                               {getActivityTypeText(activity.type)}
                             </span>
-                            {activity.requestData?.file_url && (
+                            {activity.requestData?.theses?.pdf_file_url && (
                               <button 
-                                onClick={() => window.open(activity.requestData.file_url, '_blank')}
+                                onClick={() => window.open(activity.requestData.theses.pdf_file_url, '_blank')}
                                 className="text-blue-600 hover:text-blue-700 text-sm font-medium"
                               >
                                 View Thesis
@@ -410,7 +410,7 @@ const UserDashboard = () => {
                     {(() => {
                       const collegeCounts = {};
                       userActivity.forEach(activity => {
-                        const college = activity.thesisDetails?.college || 'Unknown';
+                        const college = activity.thesisDetails?.college_department || 'Unknown';
                         collegeCounts[college] = (collegeCounts[college] || 0) + 1;
                       });
 

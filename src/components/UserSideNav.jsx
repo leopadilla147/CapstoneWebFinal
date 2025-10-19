@@ -13,6 +13,7 @@ const UserSideNav = ({ isOpen, onClose }) => {
     approvedRequests: 0
   });
   const [loading, setLoading] = useState(true);
+  const [courseName, setCourseName] = useState('');
 
   useEffect(() => {
     fetchUserData();
@@ -27,27 +28,16 @@ const UserSideNav = ({ isOpen, onClose }) => {
       if (!storedUser) return;
 
       const userData = JSON.parse(storedUser);
-      
-      // If we have a user ID but need more details, fetch from database
-      if (userData.id) {
-        const { data: userDetails, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', userData.id)
-          .single();
-          
-        if (!error && userDetails) {
-          setUser(userDetails);
-        } else {
-          setUser(userData);
-        }
-      } else {
-        setUser(userData);
-      }
+      setUser(userData);
 
       // Fetch user's statistics from the database
       if (userData.id) {
         await fetchUserStats(userData.id);
+      }
+
+      // Fetch course name if user has course data
+      if (userData.course) {
+        await fetchCourseName(userData.course);
       }
       
     } catch (error) {
@@ -57,26 +47,56 @@ const UserSideNav = ({ isOpen, onClose }) => {
     }
   };
 
+  const fetchCourseName = async (courseId) => {
+    try {
+      // If courseId is already a name (not numeric), use it directly
+      if (isNaN(courseId)) {
+        setCourseName(courseId);
+        return;
+      }
+
+      // Fetch course name from database
+      const { data, error } = await supabase
+        .from('courses')
+        .select('course_name')
+        .eq('course_id', courseId)
+        .single();
+
+      if (error) {
+        console.error('Error fetching course name:', error);
+        setCourseName(courseId); // Fallback to the ID if error
+        return;
+      }
+
+      if (data) {
+        setCourseName(data.course_name);
+      }
+    } catch (error) {
+      console.error('Error fetching course name:', error);
+      setCourseName(courseId); // Fallback to the ID if error
+    }
+  };
+
   const fetchUserStats = async (userId) => {
     try {
-      // Fetch borrowing requests for the user
-      const { data: borrowingRequests, error } = await supabase
-        .from('borrowing_requests')
+      // CORRECTED: Use 'thesis_access_request' table instead of 'borrowing_requests'
+      const { data: accessRequests, error } = await supabase
+        .from('thesis_access_requests')
         .select('status')
         .eq('user_id', userId);
 
       if (error) throw error;
 
       // Calculate statistics
-      const pendingRequests = borrowingRequests.filter(
+      const pendingRequests = accessRequests.filter(
         request => request.status === 'pending'
       ).length;
 
-      const approvedRequests = borrowingRequests.filter(
+      const approvedRequests = accessRequests.filter(
         request => request.status === 'approved' || request.status === 'returned'
       ).length;
 
-      const totalAccess = borrowingRequests.length;
+      const totalAccess = accessRequests.length;
 
       setStats({
         pendingRequests,
@@ -119,7 +139,7 @@ const UserSideNav = ({ isOpen, onClose }) => {
     if (!user) return 'Loading...';
     
     // Return full name if available
-    if (user.full_name) return user.full_name;
+    if (user.fullName) return user.fullName;
     
     // Return username if available
     if (user.username) return user.username;
@@ -140,7 +160,7 @@ const UserSideNav = ({ isOpen, onClose }) => {
   const getStudentIdDisplay = () => {
     if (!user) return 'Loading...';
     
-    if (user.student_id) return `ID: ${user.student_id}`;
+    if (user.studentId) return `ID: ${user.studentId}`;
     
     return 'Active Student';
   };
@@ -149,24 +169,29 @@ const UserSideNav = ({ isOpen, onClose }) => {
   const getCollegeDisplay = () => {
     if (!user) return 'CNSC';
     
-    if (user.college) {
+    if (user.department) {
       // Return college name, but if it's too long, return abbreviation
-      if (user.college.length > 15) {
-        return user.college.split(' ').map(word => word[0]).join('');
+      if (user.department.length > 15) {
+        return user.department.split(' ').map(word => word[0]).join('');
       }
-      return user.college;
+      return user.department;
     }
     
     return 'CNSC';
   };
 
-  // Function to get course/year info
+  // Function to get course/year info - UPDATED to use courseName state
   const getCourseInfo = () => {
     if (!user) return '';
     
     const info = [];
-    if (user.course) info.push(user.course);
-    if (user.year_level) info.push(user.year_level);
+    if (courseName) {
+      info.push(courseName);
+    } else if (user.course) {
+      // If courseName is not fetched yet, show the stored value
+      info.push(user.course);
+    }
+    if (user.yearLevel) info.push(user.yearLevel);
     
     return info.join(' • ');
   };

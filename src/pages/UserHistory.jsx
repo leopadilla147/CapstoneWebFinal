@@ -20,7 +20,7 @@ const UserHistory = () => {
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user'));
-    if (!userData || userData.role !== 'user') {
+    if (!userData || (userData.role !== 'user' && userData.role !== 'student')) {
       navigate('/');
       return;
     }
@@ -28,42 +28,40 @@ const UserHistory = () => {
     fetchUserHistory(userData.id);
   }, [navigate]);
 
-  // Fetch user history from Supabase - CORRECTED VERSION
   const fetchUserHistory = async (userId) => {
     setLoading(true);
     setError('');
     try {
       console.log('Fetching history for user:', userId);
 
-      // Use the working query pattern from BorrowedThesis.jsx
-      const { data: borrowingRequests, error: fetchError } = await supabase
-        .from('borrowing_requests')
+      // CORRECTED: Use 'thesis_access_request' and 'theses' table names
+      const { data: accessRequests, error: fetchError } = await supabase
+        .from('thesis_access_requests')
         .select(`
           *,
-          thesestwo:thesis_id (
+          theses (
+            thesis_id,
             title,
             author,
-            college,
-            file_url,
+            college_department,
+            pdf_file_url,
             qr_code_url,
-            batch,
-            thesis_id  // Changed from thesisID to thesis_id
+            batch
           )
         `)
         .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('request_date', { ascending: false });
 
       if (fetchError) {
         console.error('Supabase fetch error:', fetchError);
-        // If the complex query fails, try the simple approach
         await trySimpleQuery(userId);
         return;
       }
 
-      console.log('Fetched borrowing requests:', borrowingRequests);
+      console.log('Fetched access requests:', accessRequests);
 
       // Transform data to match the activity format
-      const userActivities = borrowingRequests.map(request => {
+      const userActivities = accessRequests.map(request => {
         let status, accessType, duration;
 
         // Map status and determine access type
@@ -71,7 +69,7 @@ const UserHistory = () => {
           case 'approved':
             status = 'completed';
             accessType = 'view';
-            duration = `Approved for ${request.duration_days || 7} days`;
+            duration = `Approved`;
             break;
           case 'pending':
             status = 'pending';
@@ -102,20 +100,20 @@ const UserHistory = () => {
         const accessDate = request.request_date || request.created_at;
         
         return {
-          id: request.id,
-          thesisId: request.thesestwo?.thesis_id || `T-${request.thesis_id}`, // Changed to thesis_id
-          title: request.thesestwo?.title || 'Unknown Thesis',
-          author: request.thesestwo?.author || 'Unknown Author',
-          college: request.thesestwo?.college || 'Unknown College',
+          id: request.access_request_id,
+          thesisId: request.theses?.thesis_id || `T-${request.thesis_id}`,
+          title: request.theses?.title || 'Unknown Thesis',
+          author: request.theses?.author || 'Unknown Author',
+          college: request.theses?.college_department || 'Unknown College',
           accessType: accessType,
           status: status,
           accessDate: accessDate,
           duration: duration,
-          qrCodeUrl: request.thesestwo?.qr_code_url,
-          fileUrl: request.thesestwo?.file_url,
-          batch: request.thesestwo?.batch,
+          qrCodeUrl: request.theses?.qr_code_url,
+          fileUrl: request.theses?.pdf_file_url,
+          batch: request.theses?.batch,
           requestData: request,
-          thesisDetails: request.thesestwo
+          thesisDetails: request.theses
         };
       });
 
@@ -134,12 +132,12 @@ const UserHistory = () => {
   // Simple query method as fallback
   const trySimpleQuery = async (userId) => {
     try {
-      // First get borrowing requests
+      // First get access requests - CORRECTED table name
       const { data: simpleRequests, error: simpleError } = await supabase
-        .from('borrowing_requests')
+        .from('thesis_access_request')
         .select('*')
         .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('request_date', { ascending: false });
 
       if (simpleError) throw simpleError;
 
@@ -147,10 +145,11 @@ const UserHistory = () => {
 
       // Then get all thesis data in one query to avoid multiple requests
       const thesisIds = simpleRequests.map(req => req.thesis_id).filter(id => id);
+      // CORRECTED: Use 'theses' table instead of 'themes'
       const { data: theses, error: thesesError } = await supabase
-        .from('thesestwo')
+        .from('theses')
         .select('*')
-        .in('id', thesisIds);
+        .in('thesis_id', thesisIds);
 
       if (thesesError) {
         console.error('Error fetching theses:', thesesError);
@@ -164,7 +163,7 @@ const UserHistory = () => {
       // Create a map for easy lookup
       const thesisMap = {};
       theses.forEach(thesis => {
-        thesisMap[thesis.id] = thesis;
+        thesisMap[thesis.thesis_id] = thesis;
       });
 
       // Transform data
@@ -177,7 +176,7 @@ const UserHistory = () => {
           case 'approved':
             status = 'completed';
             accessType = 'view';
-            duration = `Approved for ${request.duration_days || 7} days`;
+            duration = `Approved`;
             break;
           case 'pending':
             status = 'pending';
@@ -208,17 +207,17 @@ const UserHistory = () => {
         const accessDate = request.request_date || request.created_at;
 
         return {
-          id: request.id,
+          id: request.access_request_id,
           thesisId: thesisData?.thesis_id || `T-${request.thesis_id}`,
           title: thesisData?.title || 'Unknown Thesis',
           author: thesisData?.author || 'Unknown Author',
-          college: thesisData?.college || 'Unknown College',
+          college: thesisData?.college_department || 'Unknown College',
           accessType: accessType,
           status: status,
           accessDate: accessDate,
           duration: duration,
           qrCodeUrl: thesisData?.qr_code_url,
-          fileUrl: thesisData?.file_url,
+          fileUrl: thesisData?.pdf_file_url,
           batch: thesisData?.batch,
           requestData: request,
           thesisDetails: thesisData
@@ -246,7 +245,7 @@ const UserHistory = () => {
         case 'approved':
           status = 'completed';
           accessType = 'view';
-          duration = `Approved for ${request.duration_days || 7} days`;
+          duration = `Approved`;
           break;
         case 'pending':
           status = 'pending';
@@ -277,7 +276,7 @@ const UserHistory = () => {
       const accessDate = request.request_date || request.created_at;
 
       return {
-        id: request.id,
+        id: request.access_request_id,
         thesisId: `T-${request.thesis_id}`,
         title: 'Thesis Information Unavailable',
         author: 'Unknown Author',
@@ -298,7 +297,6 @@ const UserHistory = () => {
     setFilteredActivities(userActivities);
   };
 
-  // Rest of your component remains the same...
   // Filter activities based on search and filters
   useEffect(() => {
     let filtered = activities;
@@ -466,10 +464,11 @@ const UserHistory = () => {
     }
 
     try {
+      // CORRECTED: Use 'thesis_access_request' table
       const { error } = await supabase
-        .from('borrowing_requests')
+        .from('thesis_access_request')
         .update({ status: 'cancelled' })
-        .eq('id', requestId);
+        .eq('access_request_id', requestId);
 
       if (error) throw error;
 
@@ -527,20 +526,6 @@ const UserHistory = () => {
                 </button>
               </div>
             )}
-
-            {/* Debug Info - You can remove this after testing */}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-              <h3 className="font-bold text-yellow-800">Debug Info:</h3>
-              <p className="text-yellow-700">User: {user?.id}</p>
-              <p className="text-yellow-700">Activities: {activities.length}</p>
-              <p className="text-yellow-700">Loading: {loading.toString()}</p>
-              <button 
-                onClick={() => console.log('Activities:', activities)}
-                className="bg-yellow-500 text-white px-3 py-1 rounded mt-2"
-              >
-                Log Activities to Console
-              </button>
-            </div>
 
             {/* Filters and Search */}
             <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-6">
