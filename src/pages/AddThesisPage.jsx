@@ -4,7 +4,7 @@ import { Upload, FileText, User, BookOpen, Calendar, Eye } from 'lucide-react';
 import bg from "../assets/bg-gradient.png";
 import { supabase } from "../connect-supabase.js";
 import QRCode from "qrcode";
-import Header from '../components/Header';
+import CommonHeader from "../components/CommonHeader.jsx";
 import SideNav from '../components/SideNav';
 
 const AddThesisPage = () => {
@@ -266,6 +266,7 @@ const AddThesisPage = () => {
   };
 
   const handleLogOut = () => {
+    localStorage.removeItem('user');
     navigate('/')
   }
 
@@ -288,7 +289,7 @@ const AddThesisPage = () => {
   return (
     <div className="min-h-screen w-screen bg-cover bg-center bg-no-repeat flex flex-col font-sans" style={{ backgroundImage: `url(${bg})` }}>
       
-      <Header onMenuToggle={toggleSidebar} onLogOut={handleLogOut} />
+      <CommonHeader isAuthenticated={true} onLogOut={handleLogOut} userRole="admin" />
 
       <div className="flex-1 flex">
         <SideNav isOpen={isSidebarOpen} onClose={closeSidebar} />

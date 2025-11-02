@@ -31,6 +31,7 @@ function BorrowedThesis() {
   };
 
   const handleLogOut = () => {
+    localStorage.removeItem('user');
     navigate('/')
   }
 

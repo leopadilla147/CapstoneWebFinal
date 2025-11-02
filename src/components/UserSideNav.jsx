@@ -333,23 +333,6 @@ const UserSideNav = ({ isOpen, onClose }) => {
                 <span className="font-semibold text-white">{stats.totalAccess}</span>
               </div>
 
-              {/* Success Rate */}
-              {stats.totalAccess > 0 && (
-                <div className="mt-3 pt-3 border-t border-red-800">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-red-200">Success Rate:</span>
-                    <span className="font-semibold text-white">
-                      {Math.round((stats.approvedRequests / stats.totalAccess) * 100)}%
-                    </span>
-                  </div>
-                  <div className="w-full bg-red-800 rounded-full h-1.5 mt-1">
-                    <div 
-                      className="bg-green-400 h-1.5 rounded-full transition-all duration-500"
-                      style={{ width: `${(stats.approvedRequests / stats.totalAccess) * 100}%` }}
-                    ></div>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>

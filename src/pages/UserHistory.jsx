@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Calendar, Clock, BookOpen, User, Filter, Download, Eye, X, RefreshCw } from 'lucide-react';
+import { Search, Calendar, Clock, BookOpen, User, Filter, Eye, X, RefreshCw } from 'lucide-react';
 import bg from "../assets/bg-gradient.png";
 import CommonHeader from '../components/CommonHeader';
 import UserSideNav from '../components/UserSideNav';
@@ -421,43 +421,6 @@ const UserHistory = () => {
     setDateFilter('all');
   };
 
-  const exportHistory = () => {
-    const headers = ['Thesis ID', 'Title', 'Author', 'College', 'Access Type', 'Status', 'Date', 'Duration', 'Batch'];
-    const csvData = filteredActivities.map(activity => [
-      activity.thesisId,
-      `"${activity.title}"`,
-      `"${activity.author}"`,
-      `"${activity.college}"`,
-      activity.accessType,
-      activity.status,
-      formatDate(activity.accessDate),
-      activity.duration,
-      activity.batch || 'N/A'
-    ]);
-
-    const csvContent = [headers, ...csvData]
-      .map(row => row.join(','))
-      .join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `thesis-access-history-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  };
-
-  const handleViewThesis = (fileUrl) => {
-    if (fileUrl) {
-      window.open(fileUrl, '_blank');
-    } else {
-      alert('Thesis file not available');
-    }
-  };
-
   const handleCancelRequest = async (requestId) => {
     if (!window.confirm('Are you sure you want to cancel this request?')) {
       return;
@@ -541,16 +504,6 @@ const UserHistory = () => {
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-base outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   />
                 </div>
-
-                {/* Export Button */}
-                <button
-                  onClick={exportHistory}
-                  disabled={filteredActivities.length === 0}
-                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2"
-                >
-                  <Download size={20} />
-                  Export CSV
-                </button>
               </div>
 
               {/* Filter Row */}
@@ -749,32 +702,12 @@ const UserHistory = () => {
                               </span>
                             )}
 
-                            {activity.status === 'completed' && activity.fileUrl && (
-                              <button 
-                                onClick={() => handleViewThesis(activity.fileUrl)}
-                                className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
-                              >
-                                <Eye size={14} />
-                                View Thesis
-                              </button>
-                            )}
-
                             {activity.status === 'pending' && (
                               <button 
                                 onClick={() => handleCancelRequest(activity.id)}
                                 className="text-red-600 hover:text-red-700 text-sm font-medium"
                               >
                                 Cancel Request
-                              </button>
-                            )}
-
-                            {activity.qrCodeUrl && (
-                              <button 
-                                onClick={() => window.open(activity.qrCodeUrl, '_blank')}
-                                className="text-green-600 hover:text-green-700 text-sm font-medium flex items-center gap-1"
-                              >
-                                <Eye size={14} />
-                                View QR Code
                               </button>
                             )}
                           </div>

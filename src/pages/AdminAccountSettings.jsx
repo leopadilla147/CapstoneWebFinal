@@ -24,12 +24,6 @@ const AdminAccountSettings = () => {
     newPassword: '',
     confirmPassword: ''
   });
-  const [preferences, setPreferences] = useState({
-    email_notifications: true,
-    system_alerts: true,
-    weekly_reports: true,
-    security_alerts: true
-  });
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -164,12 +158,6 @@ const AdminAccountSettings = () => {
         college_department: combinedData.college_department || ''
       });
 
-      // Load preferences
-      const savedPreferences = localStorage.getItem(`admin_preferences_${combinedData.user_id}`);
-      if (savedPreferences) {
-        setPreferences(JSON.parse(savedPreferences));
-      }
-
     } catch (error) {
       console.error('Error fetching admin data:', error);
       setError('Failed to load admin data');
@@ -231,13 +219,6 @@ const AdminAccountSettings = () => {
       ...passwordData,
       [e.target.name]: e.target.value
     });
-  };
-
-  const handlePreferenceChange = (preference) => {
-    setPreferences(prev => ({
-      ...prev,
-      [preference]: !prev[preference]
-    }));
   };
 
   // Add new department function
@@ -385,9 +366,6 @@ const AdminAccountSettings = () => {
         });
 
       if (adminError) throw adminError;
-
-      // Save preferences to localStorage
-      localStorage.setItem(`admin_preferences_${admin.user_id}`, JSON.stringify(preferences));
 
       // Update local storage user data
       const storedUser = JSON.parse(localStorage.getItem('user'));
@@ -675,52 +653,6 @@ const AdminAccountSettings = () => {
                           ))}
                         </select>
                       </div>
-                    </div>
-                  </div>
-
-                  {/* Admin Preferences */}
-                  <div>
-                    <h2 className="text-xl font-bold text-[#990000] mb-4 flex items-center gap-2">
-                      <Settings size={20} />
-                      System Preferences
-                    </h2>
-                    <div className="space-y-3">
-                      <label className="flex items-center gap-3">
-                        <input 
-                          type="checkbox" 
-                          checked={preferences.email_notifications}
-                          onChange={() => handlePreferenceChange('email_notifications')}
-                          className="rounded border-gray-300 text-red-600 focus:ring-red-500" 
-                        />
-                        <span className="text-gray-700">Email notifications for system alerts</span>
-                      </label>
-                      <label className="flex items-center gap-3">
-                        <input 
-                          type="checkbox" 
-                          checked={preferences.system_alerts}
-                          onChange={() => handlePreferenceChange('system_alerts')}
-                          className="rounded border-gray-300 text-red-600 focus:ring-red-500" 
-                        />
-                        <span className="text-gray-700">Real-time system alerts</span>
-                      </label>
-                      <label className="flex items-center gap-3">
-                        <input 
-                          type="checkbox" 
-                          checked={preferences.weekly_reports}
-                          onChange={() => handlePreferenceChange('weekly_reports')}
-                          className="rounded border-gray-300 text-red-600 focus:ring-red-500" 
-                        />
-                        <span className="text-gray-700">Weekly system reports</span>
-                      </label>
-                      <label className="flex items-center gap-3">
-                        <input 
-                          type="checkbox" 
-                          checked={preferences.security_alerts}
-                          onChange={() => handlePreferenceChange('security_alerts')}
-                          className="rounded border-gray-300 text-red-600 focus:ring-red-500" 
-                        />
-                        <span className="text-gray-700">Security and access alerts</span>
-                      </label>
                     </div>
                   </div>
 
