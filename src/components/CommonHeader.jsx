@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Bell, LogOut, User, Settings, Check, X, Home } from 'lucide-react';
+import { Bell, LogOut, User, Settings, Check, X, Clock, History, Home } from 'lucide-react';
 import logo from "../assets/logo.png";
 import { supabase } from '../connect-supabase.js';
 
@@ -20,8 +20,39 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
     
     if (user) {
       fetchNotifications(user.id);
+      // Set up real-time subscription for new notifications
+      setupRealtimeNotifications(user.id);
     }
+
+    return () => {
+      // Cleanup subscription
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
   }, [location]);
+
+  let subscription;
+
+  const setupRealtimeNotifications = (userId) => {
+    subscription = supabase
+      .channel('notifications-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`
+        },
+        (payload) => {
+          // Add new notification to the top
+          setNotifications(prev => [payload.new, ...prev]);
+          setUnreadCount(prev => prev + 1);
+        }
+      )
+      .subscribe();
+  };
 
   const fetchNotifications = async (userId) => {
     if (!userId) return;
@@ -33,7 +64,7 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
         .select('*')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(20);
 
       if (error) {
         console.error('Error fetching notifications:', error);
@@ -192,7 +223,6 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
     setShowUserMenu(false);
   };
 
-  // Handle Dashboard navigation
   const handleDashboard = () => {
     if (currentUser?.role === 'admin') {
       navigate('/admin-homepage');
@@ -229,7 +259,6 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
 
   const shouldShowLoginButton = !hideLoginButton;
 
-  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
       setShowNotifications(false);
@@ -370,7 +399,6 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
                     )}
                   </div>
                   
-                  {/* Replaced "View All Notifications" with "Mark All as Read" */}
                   {unreadCount > 0 && (
                     <button 
                       onClick={markAllAsRead}
@@ -406,7 +434,6 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
                     <p className="text-xs text-gray-600 truncate">{currentUser.email}</p>
                   </div>
                   
-                  {/* My Dashboard Button in Dropdown */}
                   <button 
                     onClick={handleDashboard}
                     className="w-full text-left px-3 py-2 hover:bg-gray-100 rounded-lg text-sm flex items-center gap-2"
@@ -446,7 +473,6 @@ const CommonHeader = ({ isAuthenticated = false, onLogOut, userRole = 'guest', h
           </>
         )}
 
-        {/* Login Button - Only show when user is NOT logged in */}
         {!currentUser && shouldShowLoginButton && (
           <button 
             onClick={handleLogin} 

@@ -115,8 +115,8 @@ const AdminLogin = () => {
       };
       localStorage.setItem('user', JSON.stringify(userData));
 
-      // Create login notification
-      await createLoginNotification(user.user_id);
+      // Check for pending access requests and create notifications
+      await checkPendingAccessRequests(user.user_id);
 
       // Redirect to admin dashboard
       navigate('/admin-homepage');
@@ -129,20 +129,51 @@ const AdminLogin = () => {
     }
   };
 
-  const createLoginNotification = async (userId) => {
+  const checkPendingAccessRequests = async (adminUserId) => {
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .insert({
-          user_id: userId,
-          title: 'Admin Login Successful',
-          message: 'You have successfully logged into the Thesis Guard Admin Panel.',
-          type: 'success'
-        });
+      // Get all pending access requests
+      const { data: pendingRequests, error: requestsError } = await supabase
+        .from('thesis_access_request')
+        .select(`
+          access_request_id,
+          user_id,
+          thesis_id,
+          status,
+          request_date,
+          users!thesis_access_request_user_id_fkey(full_name, username),
+          theses!thesis_access_request_thesis_id_fkey(title, author)
+        `)
+        .eq('status', 'pending')
+        .order('request_date', { ascending: false });
 
-      if (error) throw error;
+      if (requestsError) {
+        console.error('Error fetching pending requests:', requestsError);
+        return;
+      }
+
+      if (pendingRequests && pendingRequests.length > 0) {
+        console.log(`Found ${pendingRequests.length} pending access requests`);
+
+        // Create notifications for each pending request
+        for (const request of pendingRequests) {
+          const { error: notificationError } = await supabase
+            .from('notifications')
+            .insert({
+              user_id: adminUserId,
+              access_request_id: request.access_request_id,
+              title: 'New Access Request',
+              message: `Student ${request.users?.full_name || request.users?.username} requested access to thesis: "${request.theses?.title}" by ${request.theses?.author}`,
+              type: 'info',
+              is_read: false
+            });
+
+          if (notificationError) {
+            console.error('Error creating notification:', notificationError);
+          }
+        }
+      }
     } catch (error) {
-      console.error('Error creating login notification:', error);
+      console.error('Error checking pending access requests:', error);
     }
   };
 
