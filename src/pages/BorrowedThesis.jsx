@@ -399,7 +399,7 @@ function BorrowedThesis() {
             <div className="mb-8">
               <h1 className="text-4xl font-bold text-white mb-2">THESIS GUARD</h1>
               <p className="text-xl font-semibold text-white">Thesis Access Management</p>
-              <p className="text-greyy-700 mt-2">Manage thesis access requests and track user access (Auto-expires after {expirationDays} days)</p>
+              <p className="text-greyy-700 mt-2">Manage thesis access requests and track user access</p>
             </div>
 
             {/* Statistics */}
