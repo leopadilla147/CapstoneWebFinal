@@ -42,11 +42,14 @@ const AdminLogin = () => {
     }
 
     try {
+      // Convert username to lowercase for case-insensitive comparison
+      const lowercaseUsername = username.toLowerCase();
+
       // Check in users table
       const { data: user, error: userError } = await supabase
         .from('users')
         .select('user_id, username, password, full_name, email')
-        .eq('username', username)
+        .eq('username', lowercaseUsername)
         .maybeSingle();
 
       if (userError) {

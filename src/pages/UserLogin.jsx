@@ -43,11 +43,14 @@ const UserLogin = () => {
     }
 
     try {
+      // Convert username to lowercase for case-insensitive comparison
+      const lowercaseUsername = username.toLowerCase();
+
       // Check in users table - REMOVED STATUS FROM SELECT
       const { data: user, error: userError } = await supabase
         .from('users')
         .select('user_id, username, password, full_name, email')
-        .eq('username', username)
+        .eq('username', lowercaseUsername)
         .maybeSingle();
 
       if (userError) {
@@ -161,7 +164,6 @@ const UserLogin = () => {
     }
   };
 
-  // ... (rest of the JSX remains the same)
   return (
     <div
       className="w-screen min-h-screen bg-cover bg-center bg-no-repeat flex flex-col"
